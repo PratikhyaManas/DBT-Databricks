@@ -6,9 +6,11 @@ This repository includes GitHub Actions workflows equivalent to the Azure DevOps
 
 ## Workflow Structure
 
-### CI Workflow (`.github/workflows/ci.yml`)
+**Workflow File**: `.github/workflows/dbt-databricks.yml` (consolidated CI/CD)
 
-Runs on all branches and pull requests with the following jobs:
+The repository uses a single, consolidated GitHub Actions workflow that handles both CI and CD:
+
+### CI Jobs (Run on all branches & PRs)
 
 1. **health-check**: Verify Databricks connectivity and warehouse availability
 2. **setup**: Install dependencies
@@ -23,28 +25,29 @@ Runs on all branches and pull requests with the following jobs:
 - Push to `main`, `develop`, or `feature/*` branches
 - Pull requests to `main` or `develop`
 
-### CD Workflow (`.github/workflows/cd.yml`)
-
-Runs automatically after successful CI on `main` branch:
+### CD Jobs (Run only on main branch push, after successful CI)
 
 1. **deploy-staging**: Deploy to staging environment (automatic)
    - Install dependencies
    - Run dbt models
    - Execute data quality tests
    - Deploy Databricks Asset Bundle
+   - Requires environment: `staging`
    
 2. **approve-production**: Manual approval gate for production
    - Requires environment approval
-   - 24-hour timeout by default (configurable in GitHub)
+   - Requires environment: `production-approval`
    
 3. **deploy-production**: Deploy to production (after approval)
    - Install dependencies
    - Run dbt models in production
    - Execute production tests
    - Deploy production DAB
+   - Requires environment: `production`
 
 **Triggers**:
-- Only runs on merges to `main` branch
+- Only runs on push to `main` branch (not on PRs)
+- Conditional: `if: github.ref == 'refs/heads/main' && github.event_name == 'push'`
 
 ## Required GitHub Secrets
 
@@ -325,14 +328,13 @@ Both Azure DevOps and GitHub Actions pipelines:
 
 ```bash
 # GitHub CLI
-gh workflow validate .github/workflows/ci.yml
-gh workflow validate .github/workflows/cd.yml
+gh workflow validate .github/workflows/dbt-databricks.yml
 ```
 
 ### List Workflow Runs
 
 ```bash
-gh run list --workflow=ci.yml
+gh run list --workflow=dbt-databricks.yml
 ```
 
 ### View Workflow Details
