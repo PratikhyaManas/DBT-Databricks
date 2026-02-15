@@ -1,0 +1,479 @@
+# Data Retention & Lifecycle Management Configuration
+# Defines how long data is retained, archived, and deleted across the system
+
+# Global retention settings
+global_settings:
+  default_retention_years: 3
+  archive_enabled: true
+  deletion_enabled: true
+  audit_retention_years: 7
+  
+  # Lifecycle stages
+  lifecycle_stages:
+    - stage: "active"
+      duration_months: 12
+      location: "dbfs:/data/active/"
+      replication: 3
+      backup_enabled: true
+    
+    - stage: "warm"
+      duration_months: 24
+      location: "dbfs:/data/warm/"
+      replication: 1
+      backup_enabled: true
+    
+    - stage: "cold"
+      duration_months: 36
+      location: "dbfs:/data/cold/"
+      replication: 1
+      backup_enabled: false
+    
+    - stage: "archived"
+      duration_months: 0  # Indefinite
+      location: "dbfs:/archive/"
+      replication: 1
+      backup_enabled: true
+
+# Retention by Data Classification
+classification_based_retention:
+  # RESTRICTED - Sensitive personal/financial data
+  RESTRICTED:
+    default_years: 7
+    
+    tables:
+      - pattern: "*.customers"
+        retention_years: 7
+        right_to_be_forgotten: true
+        anonymize_before_deletion: true
+        require_approval: true
+      
+      - pattern: "*.orders"
+        retention_years: 7
+        right_to_be_forgotten: true
+        anonymize_before_deletion: true
+        require_approval: true
+      
+      - pattern: "*payments"
+        retention_years: 10  # Extended for regulatory
+        right_to_be_forgotten: false  # May be required for compliance
+        anonymize_before_deletion: false
+        require_approval: true
+      
+      - pattern: "*healthcare*"
+        retention_years: 6
+        right_to_be_forgotten: true
+        anonymize_before_deletion: true
+        require_approval: true
+
+  # CONFIDENTIAL - Internal sensitive data
+  CONFIDENTIAL:
+    default_years: 3
+    
+    tables:
+      - pattern: "*_analytics"
+        retention_years: 3
+        right_to_be_forgotten: false
+        anonymize_before_deletion: false
+        require_approval: false
+      
+      - pattern: "*_internal"
+        retention_years: 3
+        right_to_be_forgotten: false
+        anonymize_before_deletion: false
+        require_approval: false
+      
+      - pattern: "*_reports"
+        retention_years: 5
+        right_to_be_forgotten: false
+        anonymize_before_deletion: false
+        require_approval: false
+
+  # INTERNAL - Operational data
+  INTERNAL:
+    default_years: 1
+    
+    tables:
+      - pattern: "*_logs"
+        retention_years: 1
+        right_to_be_forgotten: false
+        anonymize_before_deletion: false
+        require_approval: false
+      
+      - pattern: "*_temp"
+        retention_years: 0.25  # 3 months
+        right_to_be_forgotten: false
+        anonymize_before_deletion: false
+        require_approval: false
+
+  # PUBLIC - Reference data
+  PUBLIC:
+    default_years: 0  # No limit
+    
+    tables:
+      - pattern: "*reference*"
+        retention_years: 0  # Indefinite
+        right_to_be_forgotten: false
+        anonymize_before_deletion: false
+        require_approval: false
+
+# Compliance-Specific Retention
+compliance_retention:
+  # GDPR retention - Right to be forgotten
+  GDPR:
+    personal_data_retention_years: 3
+    after_data_deletion: "permanently_delete"
+    # Exception: legitimate legal hold
+    legal_hold_required: true
+    legal_hold_duration_years: 10
+    
+    # Right to erasure
+    erasure_request_compliance_days: 30
+    audit_trail_retention_years: 7
+
+  # CCPA retention - Consumer data
+  CCPA:
+    consumer_data_retention_years: 2
+    deletion_request_compliance_days: 45
+    retention_after_deletion_days: 30  # Grace period
+    audit_trail_retention_years: 3
+    
+    # PII retention limits
+    pii_retention:
+      email: 2
+      phone: 2
+      address: 3
+      ssn: 7
+
+  # SOX retention - Financial records
+  SOX:
+    financial_data_retention_years: 7
+    audit_logs_retention_years: 7
+    transaction_records_retention_years: 7
+    change_logs_retention_years: 7
+    access_logs_retention_years: 3
+
+  # HIPAA retention - Healthcare data
+  HIPAA:
+    health_records_retention_years: 6
+    hipaa_audit_retention_years: 6
+    business_associate_logs_retention_years: 6
+    access_logs_retention_years: 6
+
+# Table-Level Retention Policies
+table_retention_policies:
+  # Explicitly define high-value tables
+  
+  # Bronze layer - raw data
+  stg_customers:
+    retention_years: 7
+    classification: RESTRICTED
+    archive_enabled: true
+    primary_key: customer_id
+    retention_rule: "keep_for_duplication_prevention"
+  
+  stg_orders:
+    retention_years: 7
+    classification: RESTRICTED
+    archive_enabled: true
+    primary_key: order_id
+    retention_rule: "keep_for_regulatory"
+  
+  # Silver layer - cleaned data
+  int_customer_orders:
+    retention_years: 3
+    classification: CONFIDENTIAL
+    archive_enabled: true
+    retention_rule: "standard"
+  
+  # Gold layer - business ready
+  dim_customers:
+    retention_years: 5
+    classification: INTERNAL
+    archive_enabled: true
+    retention_rule: "keep_for_reporting"
+  
+  fct_customer_orders:
+    retention_years: 5
+    classification: INTERNAL
+    archive_enabled: true
+    retention_rule: "keep_for_analytics"
+
+# Archival Configuration
+archival:
+  enabled: true
+  
+  # Archival strategies
+  strategies:
+    - name: "hot_to_warm"
+      source_location: "dbfs:/data/active/"
+      target_location: "dbfs:/data/warm/"
+      after_days: 30
+      compress: false
+      action: "move"
+    
+    - name: "warm_to_cold"
+      source_location: "dbfs:/data/warm/"
+      target_location: "dbfs:/data/cold/"
+      after_days: 60
+      compress: true
+      action: "move"
+    
+    - name: "cold_to_archive"
+      source_location: "dbfs:/data/cold/"
+      target_location: "dbfs:/archive/"
+      after_days: 365
+      compress: true
+      format: "parquet"  # Convert to parquet for compression
+      action: "move"
+  
+  # Archival schedule
+  schedule:
+    daily_checks: true
+    check_time: "02:00"  # 2 AM UTC
+    parallel_jobs: 3
+  
+  # Archive storage settings
+  storage:
+    backend: "azure_blob_storage"
+    container: "data-archive"
+    retention_lock: false  # Set to true for immutability
+    replication: 1
+  
+  # Retrieval settings
+  retrieval:
+    on_demand: true
+    auto_restore: true
+    restore_location: "dbfs:/restored/"
+    restore_ttl_days: 7
+
+# Deletion Policies
+deletion:
+  enabled: true
+  
+  # Deletion workflow
+  workflow:
+    - step: 1
+      action: "Mark for deletion"
+      status: "pending_deletion"
+      hold_period_days: 30  # Grace period
+    
+    - step: 2
+      action: "Notify stakeholders"
+      notify_groups: ["data_governance", "compliance"]
+    
+    - step: 3
+      action: "Execute deletion"
+      status: "deleted"
+      confirmation_required: true
+    
+    - step: 4
+      action: "Verify deletion"
+      verification_type: "checksum"
+    
+    - step: 5
+      action: "Log deletion"
+      log_location: "dbfs:/compliance/deletions/"
+  
+  # Safe deletion methods
+  methods:
+    - method: "soft_delete"
+      duration_days: 30
+      recoverable: true
+      use_for: "RESTRICTED"
+    
+    - method: "hard_delete"
+      duration_days: 0
+      recoverable: false
+      verification_passes: 3
+      use_for: "sensitive_data"
+    
+    - method: "shred"
+      duration_days: 0
+      recoverable: false
+      overwrite_passes: 7  # DoD standard
+      use_for: "critical_pii"
+
+# Data Anonymization before Deletion
+anonymization:
+  enabled: true
+  
+  # Anonymization techniques
+  techniques:
+    # PII anonymization
+    - field_type: "email"
+      method: "hash"
+      algorithm: "SHA-256"
+      salt: true
+    
+    - field_type: "phone"
+      method: "mask"
+      pattern: "XXX-XXX-"
+    
+    - field_type: "ssn"
+      method: "mask"
+      pattern: "XXX-XX-"
+    
+    - field_type: "address"
+      method: "truncate"
+      keep_level: "city"
+    
+    - field_type: "date_of_birth"
+      method: "generalize"
+      generalize_to: "year"
+    
+    - field_type: "credit_card"
+      method: "mask"
+      pattern: "XXXX-XXXX-XXXX-"
+  
+  # Verification
+  verification:
+    enabled: true
+    check_for_remaining_pii: true
+    re_identification_risk_threshold: 0.05  # 5%
+
+# Backup & Recovery
+backup:
+  enabled: true
+  
+  # Backup policy
+  policy:
+    frequency: "daily"
+    time: "03:00"  # 3 AM UTC
+    retention_days: 30
+    
+    # Differential backup
+    differential_enabled: true
+    differential_frequency: "hourly"
+  
+  # Backup locations
+  locations:
+    - type: "primary"
+      location: "azure_blob_storage://backups/primary/"
+      replication: 3
+      geo_redundant: true
+    
+    - type: "disaster_recovery"
+      location: "azure_blob_storage://dr-backups/"
+      region: "secondary"  # Different region
+      replication: 1
+  
+  # Recovery
+  recovery:
+    rto_hours: 4  # Recovery Time Objective
+    rpo_hours: 1  # Recovery Point Objective
+    test_recovery_frequency_days: 30
+
+# Audit Trail Retention
+audit_trail:
+  enabled: true
+  
+  # Audit log retention
+  retention:
+    default_years: 7
+    extended_retention:
+      - event_type: "data_breach"
+        retention_years: 10
+      - event_type: "compliance_violation"
+        retention_years: 10
+      - event_type: "access_control_change"
+        retention_years: 7
+  
+  # Immutable storage
+  immutable_storage:
+    enabled: true
+    location: "dbfs:/audit-trail/immutable/"
+    write_once: true
+    delete_after_years: 10
+  
+  # Audit log verification
+  verification:
+    enabled: true
+    frequency_days: 1
+    algorithm: "SHA-256"
+    report_location: "dbfs:/audit-trail/verification/"
+
+# Metadata & Lineage Retention
+metadata:
+  data_lineage:
+    retention_years: 5
+    granularity: "table_level"
+  
+  schema_history:
+    retention_years: 10
+    track_changes: true
+  
+  access_history:
+    retention_years: 7
+    anonymize_after_years: 3
+
+# Exception Management
+exceptions:
+  enabled: true
+  
+  # Exceptions to standard retention
+  exceptions:
+    - table: "dim_customers"
+      retention_years: 5
+      reason: "Extended for analytics"
+      approval_required: true
+      expires_date: "2026-12-31"
+    
+    - table: "fct_financial_transactions"
+      retention_years: 10
+      reason: "SOX compliance requirement"
+      approval_required: false
+      permanent: true
+
+# Reporting & Monitoring
+reporting:
+  enabled: true
+  
+  # Retention compliance reports
+  reports:
+    - report_type: "retention_status"
+      frequency: "weekly"
+      recipients: ["compliance_team@company.com"]
+    
+    - report_type: "deletion_audit"
+      frequency: "monthly"
+      recipients: ["audit_team@company.com"]
+    
+    - report_type: "archive_status"
+      frequency: "monthly"
+      recipients: ["data_governance@company.com"]
+  
+  # Alerting
+  alerts:
+    - alert_type: "retention_violation"
+      severity: CRITICAL
+      action: "block_delete"
+    
+    - alert_type: "retention_expiring_soon"
+      severity: HIGH
+      days_before: 30
+    
+    - alert_type: "overdue_archival"
+      severity: MEDIUM
+      days_overdue: 7
+
+# Performance Optimization
+optimization:
+  # Compression
+  compression:
+    enabled: true
+    algorithm: "snappy"  # parquet default
+    compression_ratio_target: 0.3  # 70% reduction
+  
+  # Partitioning for retention
+  partitioning:
+    enabled: true
+    partition_by: "year"
+    sparse_index: true
+  
+  # Indexing for fast retrieval
+  indexing:
+    enabled: true
+    index_type: "z-order"  # Delta Lake Z-order indexing
+    index_columns:
+      - "created_date"
+      - "customer_id"

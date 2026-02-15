@@ -1,0 +1,35 @@
+databricks_dev:
+  target: dev
+  outputs:
+    dev:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      schema: dev_analytics
+      catalog: hive_metastore
+      threads: 4
+      timeout_seconds: 300
+      connection_parameters:
+        http_headers:
+          user-agent: "dbt-databricks"
+
+    staging:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH_STAGING', env_var('DATABRICKS_HTTP_PATH')) }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      schema: staging_analytics
+      catalog: hive_metastore
+      threads: 4
+      timeout_seconds: 300
+
+    prod:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH_PROD', env_var('DATABRICKS_HTTP_PATH')) }}"
+      token: "{{ env_var('DATABRICKS_TOKEN_PROD') }}"
+      schema: prod_analytics
+      catalog: hive_metastore
+      threads: 8
+      timeout_seconds: 300

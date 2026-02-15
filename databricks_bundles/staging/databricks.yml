@@ -1,0 +1,15 @@
+# Staging environment configuration
+include:
+  - ../../databricks.yml
+
+targets:
+  staging:
+    variables:
+      databricks_host: ${DATABRICKS_HOST}
+      databricks_token: ${DATABRICKS_TOKEN_STAGING}
+      dbt_repo_path: dbt-databricks
+
+resources:
+  clusters:
+    compute_cluster:
+      num_workers: 2

@@ -1,0 +1,315 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - feature/**
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  PYTHON_VERSION: '3.9'
+  DBT_PROFILES_DIR: './dbt'
+
+jobs:
+  # ========================================
+  # Health Check Job
+  # ========================================
+  health-check:
+    name: Infrastructure Health Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Databricks SDK
+        run: |
+          python -m pip install --upgrade pip
+          pip install databricks-sdk -q
+
+      - name: Test Databricks Connection
+        run: |
+          python - <<'EOF'
+          import sys
+          from databricks.sdk import WorkspaceClient
+          
+          try:
+              ws = WorkspaceClient(
+                  host='${{ secrets.DATABRICKS_HOST }}',
+                  token='${{ secrets.DATABRICKS_TOKEN }}'
+              )
+              user = ws.current_user.me()
+              print(f"✅ Databricks connection successful. User: {user.user_name}")
+          except Exception as e:
+              print(f"❌ Databricks connection failed: {e}")
+              sys.exit(1)
+          EOF
+
+      - name: Validate Warehouse Availability
+        run: |
+          python - <<'EOF'
+          import sys
+          from databricks.sdk import WorkspaceClient
+          
+          try:
+              ws = WorkspaceClient(
+                  host='${{ secrets.DATABRICKS_HOST }}',
+                  token='${{ secrets.DATABRICKS_TOKEN }}'
+              )
+              warehouses = ws.warehouses.list()
+              warehouse_count = sum(1 for _ in warehouses)
+              if warehouse_count > 0:
+                  print(f"✅ Found {warehouse_count} warehouse(s)")
+              else:
+                  print("⚠️  No warehouses found")
+                  sys.exit(1)
+          except Exception as e:
+              print(f"❌ Warehouse validation failed: {e}")
+              sys.exit(1)
+          EOF
+
+  # ========================================
+  # Setup Job
+  # ========================================
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    needs: health-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install dbt-databricks databricks-sdk pyyaml
+
+  # ========================================
+  # Validate Job
+  # ========================================
+  validate:
+    name: Validate Code
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dbt
+        run: pip install dbt-databricks -q
+
+      - name: Validate dbt Configuration
+        run: |
+          cd dbt
+          dbt debug --profiles-dir ${{ env.DBT_PROFILES_DIR }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: Parse dbt Project
+        run: |
+          cd dbt
+          dbt parse --profiles-dir ${{ env.DBT_PROFILES_DIR }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+  # ========================================
+  # Test Job
+  # ========================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dbt
+        run: pip install dbt-databricks -q
+
+      - name: Install dbt Dependencies
+        run: |
+          cd dbt
+          dbt deps --profiles-dir ${{ env.DBT_PROFILES_DIR }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: Run Modified Models (Slim CI)
+        continue-on-error: true
+        run: |
+          cd dbt
+          dbt run --profiles-dir ${{ env.DBT_PROFILES_DIR }} --select state:modified+ --state ./target
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DBT_ENV: dev
+
+      - name: Run Data Quality Tests
+        run: |
+          cd dbt
+          dbt test --profiles-dir ${{ env.DBT_PROFILES_DIR }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DBT_ENV: dev
+
+  # ========================================
+  # Security Job
+  # ========================================
+  security:
+    name: Security Scanning (SAST)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Security Tools
+        run: |
+          pip install bandit semgrep detect-secrets pip-audit -q
+
+      - name: Python Security Scan (Bandit)
+        run: |
+          bandit -r scripts/ -f json -o bandit-report.json
+        continue-on-error: true
+
+      - name: SQL Security Scan (Semgrep)
+        run: |
+          semgrep --config p/databricks dbt/models/ -o semgrep-report.json --json 2>&1 | head -100
+        continue-on-error: true
+
+      - name: Secrets Detection
+        run: |
+          detect-secrets scan --baseline .secrets.baseline
+        continue-on-error: true
+
+      - name: Dependency Vulnerability Scan
+        run: |
+          pip-audit --desc > pip-audit.txt
+        continue-on-error: true
+
+      - name: Upload Security Reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            semgrep-report.json
+            pip-audit.txt
+
+  # ========================================
+  # Lint Job
+  # ========================================
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install sqlfluff
+        run: pip install sqlfluff -q
+
+      - name: Run SQL Linting
+        run: |
+          sqlfluff vet --dialect databricks dbt/models/
+
+  # ========================================
+  # Documentation Job
+  # ========================================
+  documentation:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dbt
+        run: pip install dbt-databricks -q
+
+      - name: Generate dbt Docs
+        run: |
+          cd dbt
+          dbt docs generate --profiles-dir ${{ env.DBT_PROFILES_DIR }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DBT_ENV: dev
+
+      - name: Upload dbt Artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: dbt-artifacts
+          path: dbt/target
+
+  # ========================================
+  # Overall CI Status
+  # ========================================
+  ci-status:
+    name: CI Status Check
+    runs-on: ubuntu-latest
+    needs: [health-check, setup, validate, test, security, lint, documentation]
+    if: always()
+    steps:
+      - name: Check CI Status
+        run: |
+          if [[ "${{ needs.health-check.result }}" != "success" || 
+                "${{ needs.setup.result }}" != "success" || 
+                "${{ needs.validate.result }}" != "success" || 
+                "${{ needs.test.result }}" != "success" ]]; then
+            echo "❌ CI Pipeline failed"
+            exit 1
+          fi
+          echo "✅ CI Pipeline completed"

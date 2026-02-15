@@ -1,0 +1,10 @@
+# Development environment configuration
+include:
+  - databricks.yml
+
+targets:
+  dev:
+    variables:
+      databricks_host: ${DATABRICKS_HOST}
+      databricks_token: ${DATABRICKS_TOKEN}
+      dbt_repo_path: dbt-databricks

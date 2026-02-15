@@ -1,0 +1,428 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.9'
+  DBT_PROFILES_DIR: '$(System.DefaultWorkingDirectory)/dbt'
+
+stages:
+  # ========================================
+  # CI STAGES - Run on all branches & PRs
+  # ========================================
+
+  - stage: HealthCheck
+    displayName: 'Infrastructure Health Checks'
+    jobs:
+      - job: HealthCheckJob
+        displayName: 'Verify Databricks Connectivity'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install databricks-sdk -q
+            displayName: 'Install Databricks SDK'
+
+          - script: |
+              python - <<'EOF'
+              import sys
+              from databricks.sdk import WorkspaceClient
+              
+              try:
+                  ws = WorkspaceClient(
+                      host='$(DATABRICKS_HOST)',
+                      token='$(DATABRICKS_TOKEN)'
+                  )
+                  user = ws.current_user.me()
+                  print(f"✅ Databricks connection successful. User: {user.user_name}")
+              except Exception as e:
+                  print(f"❌ Databricks connection failed: {e}")
+                  sys.exit(1)
+              EOF
+            displayName: 'Test Databricks Connection'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+          - script: |
+              python - <<'EOF'
+              import sys
+              from databricks.sdk import WorkspaceClient
+              
+              try:
+                  ws = WorkspaceClient(
+                      host='$(DATABRICKS_HOST)',
+                      token='$(DATABRICKS_TOKEN)'
+                  )
+                  # Check if warehouse exists
+                  warehouses = ws.warehouses.list()
+                  warehouse_count = sum(1 for _ in warehouses)
+                  if warehouse_count > 0:
+                      print(f"✅ Found {warehouse_count} warehouse(s)")
+                  else:
+                      print("⚠️  No warehouses found")
+                      sys.exit(1)
+              except Exception as e:
+                  print(f"❌ Warehouse validation failed: {e}")
+                  sys.exit(1)
+              EOF
+            displayName: 'Validate Warehouse Availability'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+  - stage: Setup
+    displayName: 'Setup Environment'
+    dependsOn: HealthCheck
+    jobs:
+      - job: SetupEnvironment
+        displayName: 'Install Dependencies'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install dbt-databricks databricks-sdk pyyaml
+            displayName: 'Install Python Dependencies'
+
+  - stage: Validate
+    displayName: 'Validate Code'
+    dependsOn: Setup
+    jobs:
+      - job: ValidateDBT
+        displayName: 'Validate dbt Project'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+
+          - script: |
+              pip install dbt-databricks -q
+            displayName: 'Install dbt'
+
+          - script: |
+              cd dbt
+              dbt debug --profiles-dir $(DBT_PROFILES_DIR)
+            displayName: 'Validate dbt Configuration'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+          - script: |
+              cd dbt
+              dbt parse --profiles-dir $(DBT_PROFILES_DIR)
+            displayName: 'Parse dbt Project'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+  - stage: Test
+    displayName: 'Run Tests'
+    dependsOn: Validate
+    jobs:
+      - job: RunTests
+        displayName: 'Execute dbt Tests'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+
+          - script: |
+              pip install dbt-databricks -q
+            displayName: 'Install dbt'
+
+          - script: |
+              cd dbt
+              dbt deps --profiles-dir $(DBT_PROFILES_DIR)
+            displayName: 'Install dbt Dependencies'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+          - script: |
+              cd dbt
+              dbt run --profiles-dir $(DBT_PROFILES_DIR) --select state:modified+ --state ./target
+            displayName: 'Run Modified Models (Slim CI)'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+              DBT_ENV: dev
+            continueOnError: true
+
+          - script: |
+              cd dbt
+              dbt test --profiles-dir $(DBT_PROFILES_DIR)
+            displayName: 'Run Data Quality Tests'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+              DBT_ENV: dev
+
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/target/test-results.json'
+              testRunTitle: 'dbt Test Results'
+
+  - stage: Security
+    displayName: 'Security Scanning (SAST)'
+    dependsOn: []
+    jobs:
+      - job: SecurityScanning
+        displayName: 'Run SAST Checks'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+
+          - script: |
+              pip install bandit semgrep detect-secrets pip-audit -q
+            displayName: 'Install Security Tools'
+
+          - script: |
+              bandit -r scripts/ -f json -o $(Build.ArtifactStagingDirectory)/bandit-report.json
+            displayName: 'Python Security Scan (Bandit)'
+            continueOnError: true
+
+          - script: |
+              semgrep --config p/databricks dbt/models/ -o $(Build.ArtifactStagingDirectory)/semgrep-report.json --json 2>&1 | head -100
+            displayName: 'SQL Security Scan (Semgrep)'
+            continueOnError: true
+
+          - script: |
+              detect-secrets scan --baseline .secrets.baseline
+            displayName: 'Secrets Detection'
+            continueOnError: true
+
+          - script: |
+              pip-audit --desc > $(Build.ArtifactStagingDirectory)/pip-audit.txt
+            displayName: 'Dependency Vulnerability Scan'
+            continueOnError: true
+
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'security-reports'
+
+  - stage: Lint
+    displayName: 'Code Quality'
+    dependsOn: []
+    jobs:
+      - job: DatabaseCodeQuality
+        displayName: 'SQL Linting'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+
+          - script: |
+              pip install sqlfluff -q
+            displayName: 'Install sqlfluff'
+
+          - script: |
+              sqlfluff vet --dialect databricks dbt/models/
+            displayName: 'Run SQL Linting'
+            continueOnError: true
+
+  - stage: Documentation
+    displayName: 'Build Documentation'
+    dependsOn: Test
+    jobs:
+      - job: GenerateDocumentation
+        displayName: 'Generate dbt Documentation'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+
+          - script: |
+              pip install dbt-databricks -q
+            displayName: 'Install dbt'
+
+          - script: |
+              cd dbt
+              dbt docs generate --profiles-dir $(DBT_PROFILES_DIR)
+            displayName: 'Generate dbt Docs'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+              DBT_ENV: dev
+            continueOnError: true
+
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/dbt/target'
+              ArtifactName: 'dbt-artifacts'
+
+  # ========================================
+  # CD STAGES - Run only on main branch
+  # ========================================
+
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: 
+      - Test
+      - Security
+      - Lint
+      - Documentation
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployToStaging
+        displayName: 'Deploy dbt & DAB to Staging'
+        environment: 'staging'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: UsePythonVersion@0
+                  inputs:
+                    versionSpec: '$(pythonVersion)'
+                  displayName: 'Use Python $(pythonVersion)'
+
+                - script: |
+                    python -m pip install --upgrade pip
+                    pip install dbt-databricks databricks-sdk pyyaml
+                  displayName: 'Install Dependencies'
+
+                - script: |
+                    cd dbt
+                    dbt deps --profiles-dir $(DBT_PROFILES_DIR)
+                  displayName: 'Install dbt Dependencies'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
+                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_STAGING)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
+
+                - script: |
+                    cd dbt
+                    dbt run --profiles-dir $(DBT_PROFILES_DIR) --target staging
+                  displayName: 'Run dbt Models'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
+                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_STAGING)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
+                    DBT_ENV: staging
+
+                - script: |
+                    cd dbt
+                    dbt test --profiles-dir $(DBT_PROFILES_DIR) --target staging
+                  displayName: 'Run Data Quality Tests'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
+                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_STAGING)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
+                    DBT_ENV: staging
+
+                - script: |
+                    pip install databricks-labs-blueprint
+                    databricks bundle deploy --target staging -C databricks_bundles/staging
+                  displayName: 'Deploy Databricks Asset Bundle'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
+
+  - stage: ApprovalForProd
+    displayName: 'Manual Approval for Production'
+    dependsOn: DeployStaging
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: WaitForProdApproval
+        displayName: 'Wait for Production Approval'
+        pool: server
+        steps:
+          - task: ManualValidation@0
+            timeoutInMinutes: 1440  # 24 hours
+            inputs:
+              notifyUsers: 'data-engineering@company.com'
+              instructions: 'Please review staging deployment and approve production deployment.'
+
+  - stage: DeployProduction
+    displayName: 'Deploy to Production'
+    dependsOn: ApprovalForProd
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployToProduction
+        displayName: 'Deploy dbt & DAB to Production'
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: UsePythonVersion@0
+                  inputs:
+                    versionSpec: '$(pythonVersion)'
+                  displayName: 'Use Python $(pythonVersion)'
+
+                - script: |
+                    python -m pip install --upgrade pip
+                    pip install dbt-databricks databricks-sdk pyyaml
+                  displayName: 'Install Dependencies'
+
+                - script: |
+                    cd dbt
+                    dbt deps --profiles-dir $(DBT_PROFILES_DIR)
+                  displayName: 'Install dbt Dependencies'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
+                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_PROD)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)
+
+                - script: |
+                    cd dbt
+                    dbt run --profiles-dir $(DBT_PROFILES_DIR) --target prod
+                  displayName: 'Run dbt Models in Production'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
+                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_PROD)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)
+                    DBT_ENV: prod
+
+                - script: |
+                    cd dbt
+                    dbt test --profiles-dir $(DBT_PROFILES_DIR) --target prod
+                  displayName: 'Run Production Data Quality Tests'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
+                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_PROD)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)
+                    DBT_ENV: prod
+
+                - script: |
+                    pip install databricks-labs-blueprint
+                    databricks bundle deploy --target prod -C databricks_bundles/prod
+                  displayName: 'Deploy Production DAB'
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
+                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)

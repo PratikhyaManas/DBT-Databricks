@@ -1,0 +1,20 @@
+# Production environment configuration
+include:
+  - ../../databricks.yml
+
+targets:
+  prod:
+    mode: production
+    variables:
+      databricks_host: ${DATABRICKS_HOST_PROD}
+      databricks_token_prod: ${DATABRICKS_TOKEN_PROD}
+      dbt_repo_path: dbt-databricks
+
+resources:
+  clusters:
+    compute_cluster:
+      num_workers: 4
+      cluster_name: "dbt-prod-cluster"
+      spark_conf:
+        spark.databricks.cluster.profile: singleNode
+        spark.databricks.delta.preview.enabled: "true"

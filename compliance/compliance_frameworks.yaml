@@ -1,0 +1,396 @@
+# Compliance Framework Configuration
+# Defines compliance requirements, reporting, and audit policies
+
+compliance_frameworks:
+  GDPR:
+    enabled: true
+    description: "General Data Protection Regulation (EU)"
+    requirements:
+      - name: "Right to be Forgotten (Article 17)"
+        requirement_id: "GDPR-17"
+        applies_to: ["customer_data", "personal_data"]
+        max_days_to_comply: 30
+        enforcement: required
+      
+      - name: "Data Subject Access (Article 15)"
+        requirement_id: "GDPR-15"
+        applies_to: ["customer_data", "personal_data"]
+        max_days_to_comply: 30
+        enforcement: required
+      
+      - name: "Data Portability (Article 20)"
+        requirement_id: "GDPR-20"
+        applies_to: ["customer_data"]
+        max_days_to_comply: 45
+        enforcement: required
+      
+      - name: "DPA Notification (Article 33)"
+        requirement_id: "GDPR-33"
+        applies_to: ["breach_notification"]
+        max_days_to_notify: 72
+        enforcement: required
+      
+      - name: "Privacy by Design (Article 25)"
+        requirement_id: "GDPR-25"
+        applies_to: ["all_systems"]
+        enforcement: required
+    
+    # Audit requirements
+    audit:
+      frequency_days: 90
+      report_fields:
+        - data_processing_activities
+        - consent_records
+        - deletion_requests
+        - access_logs
+        - breach_incidents
+      retention_years: 3
+
+  CCPA:
+    enabled: true
+    description: "California Consumer Privacy Act"
+    requirements:
+      - name: "Consumer Access Request"
+        requirement_id: "CCPA-1100"
+        applies_to: ["california_residents"]
+        max_days_to_comply: 45
+        enforcement: required
+      
+      - name: "Deletion Request"
+        requirement_id: "CCPA-1200"
+        applies_to: ["california_residents"]
+        max_days_to_comply: 45
+        enforcement: required
+      
+      - name: "Opt-Out of Sale"
+        requirement_id: "CCPA-1700"
+        applies_to: ["california_residents"]
+        enforcement: required
+        notify_third_parties: true
+      
+      - name: "Breach Notification"
+        requirement_id: "CCPA-1798.82"
+        applies_to: ["all_residents"]
+        max_days_to_notify: 0  # Without unreasonable delay
+        enforcement: required
+
+    # Audit requirements
+    audit:
+      frequency_days: 90
+      report_fields:
+        - deletion_requests
+        - opt_out_requests
+        - access_logs
+        - data_sales
+        - breach_incidents
+      retention_years: 3
+
+  SOX:
+    enabled: true
+    description: "Sarbanes-Oxley Act"
+    requirements:
+      - name: "Financial Data Integrity (Section 302)"
+        requirement_id: "SOX-302"
+        applies_to: ["financial_data", "accounting_records"]
+        enforcement: required
+      
+      - name: "Internal Controls (Section 404)"
+        requirement_id: "SOX-404"
+        applies_to: ["financial_systems"]
+        enforcement: required
+      
+      - name: "Audit Trail (Section 802)"
+        requirement_id: "SOX-802"
+        applies_to: ["financial_records"]
+        enforcement: required
+      
+      - name: "Change Management"
+        requirement_id: "SOX-906"
+        applies_to: ["financial_systems"]
+        enforcement: required
+      
+      - name: "Document Retention (SEC Rule 17a-4)"
+        requirement_id: "SOX-17a4"
+        applies_to: ["financial_records"]
+        retention_years: 6
+        enforcement: required
+
+    # Audit requirements
+    audit:
+      frequency_days: 90
+      report_fields:
+        - change_logs
+        - access_logs
+        - data_modifications
+        - deployment_records
+        - user_permissions
+      retention_years: 7
+
+  HIPAA:
+    enabled: true
+    description: "Health Insurance Portability and Accountability Act"
+    requirements:
+      - name: "PHI Confidentiality (45 CFR 164.302)"
+        requirement_id: "HIPAA-164.302"
+        applies_to: ["health_data", "phi"]
+        enforcement: required
+      
+      - name: "Access Controls (45 CFR 164.308)"
+        requirement_id: "HIPAA-164.308"
+        applies_to: ["health_systems"]
+        enforcement: required
+      
+      - name: "Encryption & Decryption (45 CFR 164.312)"
+        requirement_id: "HIPAA-164.312"
+        applies_to: ["phi", "electronic_health_records"]
+        encryption_required: true
+        enforcement: required
+      
+      - name: "Breach Notification (45 CFR 164.400)"
+        requirement_id: "HIPAA-164.400"
+        applies_to: ["phi"]
+        max_days_to_notify: 60
+        enforcement: required
+      
+      - name: "Audit Controls (45 CFR 164.312)"
+        requirement_id: "HIPAA-audit"
+        applies_to: ["health_systems"]
+        enforcement: required
+
+    # Audit requirements
+    audit:
+      frequency_days: 90
+      report_fields:
+        - access_logs
+        - audit_logs
+        - breach_incidents
+        - encryption_verification
+        - access_control_reviews
+      retention_years: 6
+
+# Report generation configuration
+reporting:
+  # Output format
+  format: json
+  
+  # Report distribution
+  distribution:
+    email_recipients:
+      - compliance_team@company.com
+      - audit_team@company.com
+    storage_location: "dbfs:/compliance/reports/"
+    retention_days: 2555  # 7 years
+
+  # Report scheduling
+  schedule:
+    daily:
+      enabled: true
+      time: "02:00"  # 2 AM UTC
+    
+    weekly:
+      enabled: true
+      day: monday
+      time: "02:00"
+    
+    monthly:
+      enabled: true
+      day: 1
+      time: "02:00"
+    
+    quarterly:
+      enabled: true
+      months: [1, 4, 7, 10]  # Jan, Apr, Jul, Oct
+      day: 1
+      time: "02:00"
+
+  # Custom reports
+  custom_reports:
+    - name: "GDPR Data Processing Report"
+      frameworks: [GDPR]
+      frequency: monthly
+      includes: ["data_processing_activities", "consent_records"]
+    
+    - name: "CCPA Consumer Requests Report"
+      frameworks: [CCPA]
+      frequency: weekly
+      includes: ["deletion_requests", "opt_out_requests"]
+    
+    - name: "SOX Financial Data Integrity Report"
+      frameworks: [SOX]
+      frequency: monthly
+      includes: ["change_logs", "access_logs"]
+    
+    - name: "HIPAA PHI Access Report"
+      frameworks: [HIPAA]
+      frequency: daily
+      includes: ["access_logs", "phi_access"]
+
+# Data retention policies
+retention_policies:
+  # By classification
+  by_classification:
+    RESTRICTED:
+      default_retention_years: 7
+      # Customer data
+      - pattern: "*.customers"
+        retention_years: 7
+        must_anonymize: true
+        must_archive: true
+    
+    CONFIDENTIAL:
+      default_retention_years: 3
+      - pattern: "*_analytics"
+        retention_years: 3
+    
+    INTERNAL:
+      default_retention_years: 1
+    
+    PUBLIC:
+      default_retention_years: 0  # No limit
+
+  # Audit logs
+  audit_logs:
+    retention_years: 7
+    archive_after_years: 3
+    archive_location: "dbfs:/compliance/archive/"
+
+  # Compliance reports
+  compliance_reports:
+    retention_years: 7
+    archive_after_years: 1
+
+# Data breach incident response
+incident_response:
+  # Detection
+  detection:
+    enabled: true
+    alerts:
+      - type: "unusual_access_pattern"
+        severity: HIGH
+      - type: "bulk_deletion"
+        severity: CRITICAL
+      - type: "unauthorized_access"
+        severity: CRITICAL
+
+  # Response workflow
+  workflow:
+    - step: 1
+      action: "Log incident immediately"
+      owner: "security_team"
+    
+    - step: 2
+      action: "Assess scope of breach"
+      owner: "security_team"
+      max_hours: 24
+    
+    - step: 3
+      action: "Notify affected individuals (if required)"
+      owner: "compliance_team"
+      max_hours: 72
+    
+    - step: 4
+      action: "Notify regulators (if required)"
+      owner: "legal_team"
+      max_hours: 72
+    
+    - step: 5
+      action: "Mitigation and prevention"
+      owner: "security_team"
+    
+    - step: 6
+      action: "Documentation and closure"
+      owner: "compliance_team"
+
+  # Evidence preservation
+  evidence_preservation:
+    enabled: true
+    duration_days: 90
+    location: "dbfs:/compliance/incidents/"
+
+# Compliance monitoring and enforcement
+monitoring:
+  # Continuous compliance checks
+  continuous_checks:
+    - check_name: "Encryption Status"
+      frequency_hours: 6
+      frameworks: [GDPR, CCPA, SOX, HIPAA]
+    
+    - check_name: "Access Control Review"
+      frequency_days: 7
+      frameworks: [SOX, HIPAA]
+    
+    - check_name: "Data Classification Review"
+      frequency_days: 30
+      frameworks: [GDPR, CCPA]
+    
+    - check_name: "Retention Policy Compliance"
+      frequency_days: 30
+      frameworks: [GDPR, CCPA, SOX, HIPAA]
+
+  # Alert thresholds
+  alerts:
+    violation:
+      severity: CRITICAL
+      notify_immediately: true
+    warning:
+      severity: HIGH
+      notify_daily: true
+    info:
+      severity: MEDIUM
+      notify_weekly: true
+
+# Audit logging requirements per framework
+audit_logging:
+  events_per_framework:
+    GDPR:
+      - data_access_personal_data
+      - consent_changes
+      - deletion_requests
+      - breach_notifications
+    
+    CCPA:
+      - consumer_access_requests
+      - deletion_requests
+      - opt_out_requests
+      - breach_notifications
+    
+    SOX:
+      - financial_data_access
+      - financial_data_modifications
+      - system_changes
+      - user_access_changes
+    
+    HIPAA:
+      - phi_access
+      - phi_modifications
+      - phi_deletion
+      - breach_notifications
+      - access_control_changes
+
+  # Immutable audit storage
+  storage:
+    backup_enabled: true
+    backup_location: "dbfs:/compliance/audit-backups/"
+    fingerprint_algorithm: "SHA-256"
+    integrity_check_frequency_hours: 24
+
+# Governance committee configuration
+governance_committee:
+  enabled: true
+  members:
+    - role: "Chief Compliance Officer"
+      email: "cco@company.com"
+    - role: "Data Protection Officer"
+      email: "dpo@company.com"
+    - role: "Security Lead"
+      email: "security@company.com"
+    - role: "Audit Lead"
+      email: "audit@company.com"
+  
+  meetings:
+    frequency: quarterly
+    review_items:
+      - compliance_status_by_framework
+      - incidents_and_breaches
+      - policy_changes
+      - training_completeness

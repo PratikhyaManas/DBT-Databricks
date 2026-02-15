@@ -1,0 +1,99 @@
+bundle:
+  name: databricks-dbt-project
+  description: Databricks Asset Bundle for dbt project with multi-environment support
+
+variables:
+  environment:
+    description: Environment name (dev, staging, prod)
+    default: dev
+
+  catalog:
+    description: Databricks catalog name
+    default: hive_metastore
+
+  schema_prefix:
+    description: Schema prefix for namespacing
+    default: ""
+
+  cluster_size:
+    description: Cluster node type
+    default: i3.xlarge
+
+  num_workers:
+    description: Number of worker nodes
+    default: 2
+
+  dbt_version:
+    description: dbt-databricks package version
+    default: "1.5.*"
+
+targets:
+  dev:
+    mode: development
+    workspace:
+      host: "${var.databricks_host}"
+      token: "${var.databricks_token}"
+    variables:
+      environment: dev
+      schema_prefix: dev_
+      num_workers: 1
+
+  staging:
+    mode: development
+    workspace:
+      host: "${var.databricks_host}"
+      token: "${var.databricks_token}"
+    variables:
+      environment: staging
+      schema_prefix: staging_
+      num_workers: 2
+
+  prod:
+    mode: production
+    workspace:
+      host: "${var.databricks_host}"
+      token: "${var.databricks_token_prod}"
+    variables:
+      environment: prod
+      schema_prefix: ""
+      num_workers: 4
+
+# Define Databricks resources
+resources:
+  jobs:
+    dbt_run_job:
+      name: "dbt-run-${var.environment}"
+      description: "Run dbt models for ${var.environment} environment"
+      cluster_key: compute_cluster
+      tasks:
+        - task_key: dbt_run
+          notebook_task:
+            notebook_path: "/Repos/${var.dbt_repo_path}/run_dbt_job"
+            base_parameters:
+              environment: "${var.environment}"
+              schema: "${var.schema_prefix}analytics"
+
+    dbt_test_job:
+      name: "dbt-test-${var.environment}"
+      description: "Run dbt tests for ${var.environment} environment"
+      cluster_key: compute_cluster
+      tasks:
+        - task_key: dbt_test
+          notebook_task:
+            notebook_path: "/Repos/${var.dbt_repo_path}/run_dbt_tests"
+            base_parameters:
+              environment: "${var.environment}"
+              schema: "${var.schema_prefix}analytics"
+
+  clusters:
+    compute_cluster:
+      cluster_name: "dbt-${var.environment}-cluster"
+      spark_version: "13.3.x-scala2.12"
+      node_type_id: "${var.cluster_size}"
+      num_workers: ${var.num_workers}
+      spark_conf:
+        spark.databricks.cluster.profile: singleNode
+      aws_attributes:
+        first_on_demand: 1
+        availability: SPOT_WITH_FALLBACK
+      autotermination_minutes: 30

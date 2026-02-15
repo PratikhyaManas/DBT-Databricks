@@ -1,0 +1,37 @@
+# Core dbt and database adapter
+dbt-core>=1.5.0,<2.0.0
+dbt-databricks>=1.5.0,<2.0.0
+
+# Databricks SDK
+databricks-sdk>=0.12.0
+
+# Databricks Asset Bundles
+databricks-labs-blueprint>=0.2.0
+
+# Data processing
+pandas>=1.3.0
+pyyaml>=6.0
+
+# Testing and linting
+pytest>=7.0.0
+sqlfluff>=2.0.0
+
+# Static Application Security Testing (SAST)
+bandit>=1.7.0           # Python security scanning
+semgrep>=1.45.0         # SQL & pattern matching security
+detect-secrets>=1.4.0   # Secret detection
+pip-audit>=2.4.0        # Dependency vulnerability scanning
+
+# Enterprise Monitoring & Observability
+azure-monitor-opentelemetry>=1.0.0  # Azure Application Insights client
+datadog>=0.47.0                     # Datadog metrics and logging
+python-json-logger>=2.0.0           # Structured JSON logging
+
+# Enterprise Governance & Compliance
+cryptography>=41.0.0                # Audit log signing and encryption
+dateutil>=2.8.0                     # Date utilities for retention policies
+regex>=2023.0.0                     # Advanced pattern matching for PII detection
+
+# Utilities
+python-dotenv>=0.19.0
+click>=8.0.0

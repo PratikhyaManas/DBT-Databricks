@@ -1,0 +1,37 @@
+# Semgrep security rules for dbt & SQL
+# Detects SQL injection, insecure patterns, and dbt anti-patterns
+
+rules:
+  - id: hardcoded-secrets-in-dbt
+    pattern: |
+      password = "...";
+    message: "Hardcoded password found in dbt model"
+    severity: ERROR
+    languages: [sql]
+
+  - id: dynamic-sql-without-parameterization
+    pattern: |
+      EXECUTE "... " || ... || " ..."
+    message: "Dynamic SQL without parameterization - SQL injection risk"
+    severity: WARNING
+    languages: [sql]
+
+  - id: avoid-hardcoded-table-names
+    pattern: |
+      SELECT ... FROM "table_name"
+    message: "Use source() or ref() instead of hardcoded table names"
+    severity: INFO
+    languages: [sql]
+
+  # Add more custom rules as needed
+  # Rule format: https://semgrep.dev/docs/writing-rules/
+
+# Run with preconfigured rule sets
+rules:
+  - patterns: 
+    - pattern-either:
+      - pattern: SELECT .* FROM .* WHERE 1=1
+      - pattern: "[' \"]" # String concatenation for SQL
+    message: "Potential SQL injection risk"
+    severity: WARNING
+    languages: [sql]

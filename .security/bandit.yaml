@@ -1,0 +1,21 @@
+# Bandit security configuration
+# Configuration for Python security scanning
+
+# Exclude tests from security scanning
+exclude_dirs:
+  - tests
+  - test
+  - venv
+  - .venv
+  - dbt
+
+# Skips (use judiciously - document why)
+skips:
+  # Add specific B-codes to skip if needed
+  # - B101  # assert_used
+
+# Tests to run (leave empty to run all tests)
+tests:
+
+# Report verbosity: low, medium, high
+verbosity: medium

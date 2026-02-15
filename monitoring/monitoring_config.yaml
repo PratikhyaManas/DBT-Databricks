@@ -1,0 +1,462 @@
+# Monitoring & Observability Configuration
+# Defines telemetry, metrics, health checks, and alert policies
+
+# Azure Application Insights Configuration
+application_insights:
+  enabled: true
+  connection_string: "${APPINSIGHTS_CONNECTION_STRING}"
+  environment: "${ENVIRONMENT}"
+  
+  # Distributed tracing
+  distributed_tracing:
+    enabled: true
+    sample_rate: 1.0  # 100% sampling for production, reduce for high volume
+    include_dependencies: true
+  
+  # Performance counters
+  performance_counters:
+    enabled: true
+    collection_interval_seconds: 60
+    counters:
+      - "\\Processor(_Total)\\% Processor Time"
+      - "\\Memory\\Available Bytes"
+      - "\\Process(??APP_WIN32_PROC??)\\% Processor Time"
+
+  # Exception tracking
+  exception_tracking:
+    enabled: true
+    capture_memory_dumps: false  # Set to true for critical environments
+    filter_exceptions:
+      - "Microsoft.Azure.*"
+      - "System.Net.*"
+
+# Datadog Integration
+datadog:
+  enabled: true
+  api_key: "${DATADOG_API_KEY}"
+  enabled_env: true
+  
+  # Host tags
+  tags:
+    environment: "${ENVIRONMENT}"
+    service: "dbt-databricks"
+    team: "data-engineering"
+  
+  # Metrics configuration
+  metrics:
+    enabled: true
+    namespace: "dbt.databricks"
+    flush_interval_seconds: 10
+  
+  # Log integration
+  logging:
+    enabled: true
+    log_level: INFO
+    batch_size: 100
+
+# Prometheus Metrics Configuration (for self-hosted monitoring)
+prometheus:
+  enabled: false  # Set to true if using Prometheus + Grafana
+  scrape_interval_seconds: 15
+  metrics_port: 8000
+  
+  # Metrics to collect
+  metrics:
+    - name: "dbt_model_execution_duration_seconds"
+      type: histogram
+      buckets: [1, 5, 10, 30, 60, 300]
+    
+    - name: "dbt_test_execution_duration_seconds"
+      type: histogram
+      buckets: [1, 5, 10, 30, 60]
+    
+    - name: "dbt_models_total"
+      type: gauge
+    
+    - name: "dbt_failed_models"
+      type: counter
+    
+    - name: "pipeline_execution_status"
+      type: gauge
+      values: [0, 1]  # 0=failed, 1=success
+
+# Health Check Configuration
+health_checks:
+  enabled: true
+  
+  # Databricks connectivity
+  databricks:
+    enabled: true
+    check_frequency_seconds: 300  # Every 5 minutes
+    critical_threshold_consecutive_failures: 3
+    alert_on_failure: true
+    workspace_url: "${DATABRICKS_HOST}"
+  
+  # Warehouse availability
+  warehouse:
+    enabled: true
+    check_frequency_seconds: 600  # Every 10 minutes
+    critical_threshold_consecutive_failures: 2
+    warehouse_ids:
+      - "${WAREHOUSE_ID_PROD}"
+      - "${WAREHOUSE_ID_STAGING}"
+    alert_on_failure: true
+  
+  # Schema validation
+  schema:
+    enabled: true
+    check_frequency_seconds: 3600  # Every hour
+    schemas_to_validate:
+      - "bronze"
+      - "silver"
+      - "gold"
+    alert_on_failure: true
+  
+  # Delta Lake table integrity
+  delta_lake:
+    enabled: true
+    check_frequency_seconds: 7200  # Every 2 hours
+    check_types:
+      - table_exists
+      - columns_match_schema
+      - version_history
+    alert_on_failure: true
+
+# Performance Monitoring Configuration
+performance_monitoring:
+  enabled: true
+  
+  # dbt model execution tracking
+  dbt_models:
+    enabled: true
+    
+    # Slow model detection
+    slow_model_threshold_seconds: 60
+    alert_on_slow_models: true
+    
+    # Metrics to track
+    metrics:
+      - execution_time
+      - rows_affected
+      - database_queries
+      - test_results
+    
+    # Performance baselines
+    baselines:
+      - model_name: "fct_customer_orders"
+        baseline_seconds: 45
+        warning_threshold_seconds: 60
+        critical_threshold_seconds: 120
+      
+      - model_name: "dim_customers"
+        baseline_seconds: 15
+        warning_threshold_seconds: 25
+        critical_threshold_seconds: 45
+    
+    # Historical tracking
+    track_history: true
+    history_retention_days: 90
+
+  # Test execution tracking
+  dbt_tests:
+    enabled: true
+    track_metrics:
+      - execution_time
+      - test_status
+      - rows_tested
+      - pass_rate
+    
+    # Test performance baselines
+    baselines:
+      - test_name: "not_null"
+        baseline_seconds: 5
+        warning_threshold_seconds: 10
+      
+      - test_name: "relationships"
+        baseline_seconds: 10
+        warning_threshold_seconds: 20
+
+  # Pipeline execution tracking
+  pipeline_execution:
+    enabled: true
+    track_metrics:
+      - total_duration
+      - stage_duration
+      - success_rate
+      - failure_rate
+    
+    # Stage-specific tracking
+    stages:
+      - stage_name: "Setup"
+        baseline_seconds: 30
+        warning_threshold_seconds: 60
+      
+      - stage_name: "Validate"
+        baseline_seconds: 120
+        warning_threshold_seconds: 180
+      
+      - stage_name: "Test"
+        baseline_seconds: 300
+        warning_threshold_seconds: 600
+      
+      - stage_name: "Deploy"
+        baseline_seconds: 120
+        warning_threshold_seconds: 300
+
+# Logging Configuration
+logging:
+  enabled: true
+  
+  # Log level
+  default_level: "INFO"
+  debug_enabled_for:
+    - "monitoring.telemetry"
+    - "compliance.audit_logging"
+  
+  # Log format
+  format: "json"
+  
+  # Log destinations
+  destinations:
+    - type: "file"
+      path: "/dbfs/logs/application.log"
+      level: "INFO"
+      rotation: "daily"
+      retention_days: 30
+    
+    - type: "application_insights"
+      enabled: true
+      level: "WARNING"
+    
+    - type: "datadog"
+      enabled: true
+      level: "ERROR"
+    
+    - type: "console"
+      level: "INFO"
+  
+  # Structured logging
+  structured_logging:
+    enabled: true
+    include_context:
+      - request_id
+      - user_id
+      - environment
+      - version
+      - timestamp
+
+# Alerting Configuration
+alerting:
+  enabled: true
+  
+  # Alert channels
+  channels:
+    - type: "email"
+      recipients:
+        - "alerts@company.com"
+        - "team-lead@company.com"
+      enabled: true
+    
+    - type: "slack"
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+      enabled: true
+      channel: "#data-engineering-alerts"
+    
+    - type: "pagerduty"
+      integration_key: "${PAGERDUTY_INTEGRATION_KEY}"
+      enabled: false  # Enable for production
+    
+    - type: "application_insights"
+      enabled: true
+  
+  # Alert rules
+  rules:
+    # Critical alerts
+    - name: "databricks_connection_failure"
+      severity: CRITICAL
+      condition: "health_check.databricks.status == FAILED"
+      consecutive_failures: 3
+      notify_channels: ["email", "slack", "pagerduty"]
+      escalate_after_minutes: 15
+    
+    - name: "warehouse_down"
+      severity: CRITICAL
+      condition: "health_check.warehouse.status == FAILED"
+      consecutive_failures: 2
+      notify_channels: ["email", "slack", "pagerduty"]
+      escalate_after_minutes: 10
+    
+    # High priority alerts
+    - name: "slow_model_execution"
+      severity: HIGH
+      condition: "model_execution_time > critical_threshold"
+      notify_channels: ["email", "slack"]
+      threshold_percentage: 80
+    
+    - name: "failed_pipeline_stage"
+      severity: HIGH
+      condition: "pipeline.stage.status == FAILED"
+      notify_channels: ["email", "slack"]
+    
+    - name: "test_failure"
+      severity: HIGH
+      condition: "dbt_test.status == FAILED"
+      notify_channels: ["email", "slack"]
+      batch_notifications: true  # Group similar alerts
+    
+    # Medium priority alerts
+    - name: "slow_test_execution"
+      severity: MEDIUM
+      condition: "test_execution_time > warning_threshold"
+      notify_channels: ["slack"]
+    
+    - name: "low_disk_space"
+      severity: MEDIUM
+      condition: "disk_usage_percentage > 80"
+      notify_channels: ["slack"]
+    
+    # Low priority alerts
+    - name: "missing_metric"
+      severity: LOW
+      condition: "metric.collection_failed"
+      notify_channels: ["slack"]
+      suppress_duplicate_for_minutes: 60
+
+# SLA Monitoring
+sla_monitoring:
+  enabled: true
+  
+  # SLA tracking
+  slas:
+    # Model availability
+    - name: "model_availability"
+      target_percentage: 99.9
+      measurement_interval: "daily"
+      breach_window_hours: 1
+      alert_on_breach: true
+    
+    # Test passage rate
+    - name: "test_passage_rate"
+      target_percentage: 95.0
+      measurement_interval: "daily"
+      breach_window_hours: 2
+      alert_on_breach: true
+    
+    # Pipeline success rate
+    - name: "pipeline_success_rate"
+      target_percentage: 98.0
+      measurement_interval: "daily"
+      breach_window_hours: 1
+      alert_on_breach: true
+    
+    # Data freshness
+    - name: "data_freshness"
+      target_max_age_hours: 6
+      measurement_interval: "every_6_hours"
+      breach_window_hours: 1
+      alert_on_breach: true
+
+  # SLA reporting
+  reporting:
+    enabled: true
+    frequency: "monthly"
+    report_date: "1st of month"
+    recipients:
+      - "stakeholders@company.com"
+      - "management@company.com"
+
+# Metrics Retention & Archival
+retention:
+  # Real-time metrics (high resolution)
+  real_time:
+    retention_days: 7
+    interval: "1 minute"
+  
+  # Daily metrics
+  daily:
+    retention_days: 90
+    interval: "1 day"
+  
+  # Monthly metrics
+  monthly:
+    retention_days: 730  # 2 years
+    interval: "1 month"
+  
+  # Archival
+  archival:
+    enabled: true
+    archive_after_days: 90
+    archive_location: "dbfs:/monitoring/archive/"
+    compression: "gzip"
+
+# Dashboard Configuration
+dashboards:
+  enabled: true
+  
+  # Grafana dashboards (if using)
+  grafana:
+    enabled: false
+    base_url: "${GRAFANA_BASE_URL}"
+    api_key: "${GRAFANA_API_KEY}"
+    
+    dashboards:
+      - name: "dbt Execution Overview"
+        refresh_interval: "30s"
+      
+      - name: "Pipeline Health"
+        refresh_interval: "1m"
+      
+      - name: "Data Quality Metrics"
+        refresh_interval: "5m"
+  
+  # Application Insights custom dashboards
+  app_insights:
+    enabled: true
+    dashboards:
+      - name: "dbt-Databricks Overview"
+      - name: "Performance Trends"
+      - name: "Error Analysis"
+
+# Budget & Cost Monitoring
+cost_monitoring:
+  enabled: true
+  
+  # Service cost tracking
+  services:
+    - service: "Databricks"
+      budget_monthly: 5000
+      alert_at_percentage: 80
+    
+    - service: "Application Insights"
+      budget_monthly: 100
+      alert_at_percentage: 80
+    
+    - service: "Data Storage"
+      budget_monthly: 2000
+      alert_at_percentage: 85
+  
+  # Total budget
+  total_monthly_budget: 10000
+  alert_at_percentage: 80
+  report_frequency: "weekly"
+
+# Advanced Monitoring Features
+advanced_features:
+  # Anomaly detection
+  anomaly_detection:
+    enabled: true
+    sensitivity: "medium"  # low, medium, high
+    min_data_points: 14  # At least 2 weeks of data
+    alert_on_anomaly: true
+  
+  # Forecasting
+  forecasting:
+    enabled: false  # Requires 90+ days of data
+    forecast_days_ahead: 30
+    confidence_level: 0.95
+  
+  # Correlation analysis
+  correlation_analysis:
+    enabled: true
+    check_frequency_days: 7
+    min_correlation_coefficient: 0.8
