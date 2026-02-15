@@ -1,6 +1,6 @@
-# DBT Databricks Asset Bundle with Azure DevOps CI/CD & SAST
+# DBT Databricks Asset Bundle with Azure DevOps & GitHub Actions CI/CD
 
-Production-ready dbt + Databricks Asset Bundle + Azure DevOps integration with automated security scanning and SAST.
+Production-ready dbt + Databricks Asset Bundle with dual CI/CD support (Azure DevOps & GitHub Actions), enterprise monitoring, data governance, compliance, and automated security scanning.
 
 ## 🚀 Quick Start
 
@@ -38,41 +38,71 @@ make docs
 
 ```
 DBT-Databricks/
-├── README.md                    # This file - quick start & overview
-├── OPERATIONS.md               # Deployment, troubleshooting, best practices
-├── requirements.txt            # Python dependencies (dbt, SDK, SAST tools)
-├── .env.example               # Environment variables template
-├── Makefile                   # Common commands (make run, make test, etc.)
+├── README.md                           # This file - quick start & overview
+├── OPERATIONS.md                      # Deployment, troubleshooting, best practices
+├── ENTERPRISE_FEATURES.md             # Enterprise modules documentation
+├── ENTERPRISE_DEPLOYMENT_GUIDE.md     # Enterprise deployment instructions
+├── GITHUB_ACTIONS_SETUP.md            # GitHub Actions workflow setup guide
+├── WHATS_NEW.md                       # Feature changelog
+├── ENHANCEMENT_SUMMARY.md             # Summary of enterprise enhancements
+├── azure-pipelines.yml                # Azure DevOps consolidated CI/CD pipeline
+├── requirements.txt                   # Python dependencies (dbt, SDK, SAST, enterprise tools)
+├── .env.example                       # Environment variables template
+├── Makefile                           # Common commands (make run, make test, etc.)
+├── .secrets.baseline                  # Secrets detection baseline
 │
-├── dbt/                       # dbt project root
-│   ├── dbt_project.yml       # dbt configuration
-│   ├── profiles.yml          # Database connections (dev/staging/prod)
-│   ├── models/               # Data models (3-layer architecture)
-│   │   ├── staging/          # Layer 1: Clean & normalize
-│   │   ├── intermediate/     # Layer 2: Transform & join
-│   │   └── marts/            # Layer 3: Facts & dimensions
-│   ├── tests/                # Data quality tests
-│   ├── macros/               # Reusable SQL functions
-│   ├── data/                 # Reference/seed data (CSV)
-│   └── schema.yml            # Source definitions & tests
+├── dbt/                               # dbt project root
+│   ├── dbt_project.yml               # dbt configuration
+│   ├── profiles.yml                  # Database connections (dev/staging/prod)
+│   ├── models/                       # Data models (3-layer architecture)
+│   │   ├── staging/                  # Layer 1: Clean & normalize
+│   │   ├── intermediate/             # Layer 2: Transform & join
+│   │   └── marts/                    # Layer 3: Facts & dimensions
+│   ├── tests/                        # Data quality tests
+│   ├── macros/                       # Reusable SQL functions
+│   ├── data/                         # Reference/seed data (CSV)
+│   └── schema.yml                    # Source definitions & tests
 │
-├── databricks.yml            # Root DAB configuration
-├── databricks_bundles/       # Environment-specific configs
+├── databricks.yml                     # Root DAB configuration
+├── databricks_bundles/                # Environment-specific DAB configs
 │   ├── dev/
 │   ├── staging/
 │   └── prod/
 │
-├── .azure-pipelines/         # CI/CD pipeline definitions
-│   └── azure-pipelines.yml  # Consolidated CI/CD pipeline (PR & deployment)
+├── azure-pipelines.yml                # Azure DevOps CI/CD (root level)
 │
-├── scripts/                  # Automation scripts
-│   ├── deploy.py            # Multi-environment deployment
-│   └── test_data_load.py    # Sample data loader
+├── .github/                           # GitHub Actions & configuration
+│   └── workflows/
+│       └── dbt-databricks.yml        # Consolidated GitHub Actions CI/CD
 │
-└── .security/               # Security configurations
-    ├── bandit.yaml         # Python security rules
-    └── semgrep.yml         # SQL/infrastructure scanning
+├── scripts/                           # Automation scripts
+│   ├── deploy.py                     # Multi-environment deployment + telemetry + audit
+│   └── test_data_load.py             # Sample data loader
+│
+├── monitoring/                        # Enterprise monitoring module
+│   ├── telemetry.py                  # TelemetryClient, HealthCheck, PerformanceMonitor
+│   └── monitoring_config.yaml        # Health check, alert, and SLA definitions
+│
+├── governance/                        # Enterprise data governance module
+│   ├── data_governance.py            # Classification, PII detection, SLA framework
+│   ├── data_classification.yaml      # Table sensitivity mappings & PII types
+│   └── retention_policies.yaml       # Data lifecycle (active → warm → cold → archived)
+│
+├── compliance/                        # Enterprise compliance & audit module
+│   ├── audit_logging.py              # Audit logger, compliance reports (GDPR/CCPA/SOX/HIPAA)
+│   └── compliance_frameworks.yaml    # Compliance requirements & reporting config
+│
+└── .security/                         # Security configurations
+    ├── bandit.yaml                   # Python security rules
+    └── semgrep.yml                   # SQL/infrastructure scanning rules
 ```
+
+### Updated Key Sections:
+- **Root Level**: `azure-pipelines.yml` (Azure DevOps) - consolidated CI/CD
+- **GitHub**: `.github/workflows/dbt-databricks.yml` (GitHub Actions) - consolidated CI/CD
+- **Enterprise Modules**: Monitoring, Governance, Compliance with configuration files
+- **Documentation**: Added enterprise guides and feature documentation
+- **Configuration**: Added monitoring, governance, and compliance YAML files
 
 ## 🏗️ Architecture
 
@@ -94,30 +124,39 @@ Raw Sources → Staging Views → Intermediate Views → Fact/Dimension Tables �
 
 ### CI/CD Pipeline Flow
 ```
-Push to GitHub/ADO
+Push Code
     ↓
-CI Pipeline (Auto)
+CI Pipeline (Auto - Azure DevOps or GitHub Actions)
+├─ Health Check (Databricks connectivity)
 ├─ Setup environment
 ├─ Validate dbt config
 ├─ Run tests (modified models)
-├─ Security scanning (SAST)
-├─ SQL linting
-└─ Publish artifacts
+├─ Security scanning (SAST: Bandit, Semgrep, pip-audit, detect-secrets)
+├─ SQL linting (sqlfluff)
+└─ Generate documentation
     ↓
-Manual Code Review
+For Pull Requests: CI stops here
+For Main Branch Pushes: Continue to CD
     ↓
-Merge to main
+CD Pipeline (Auto on main - staging)
+├─ Deploy to staging environment
+├─ Run full dbt + all tests
+├─ Run monitoring health checks
+├─ Deploy DAB (Databricks Asset Bundle)
     ↓
-CD Pipeline (Auto)
-├─ Deploy to staging
-├─ Run full dbt + tests
-├─ Deploy DAB
+Manual Approval Gate
+(Requires human review of staging results)
     ↓
-Manual Approval
-    ↓
+CD Pipeline (Manual trigger - production)
 ├─ Deploy to production
-└─ Run production validation
+├─ Run production validation tests
+├─ Log all operations to audit trail
+└─ Complete compliance reporting
 ```
+
+**Dual CI/CD Support**:
+- **Azure DevOps**: `azure-pipelines.yml` (root level)
+- **GitHub Actions**: `.github/workflows/dbt-databricks.yml`
 
 ## 🔒 Security Features
 
@@ -237,7 +276,17 @@ Define tests in `dbt/models/schema.yml`
 
 **Main Documentation**
 - [README.md](README.md) - This file (overview & quick start)
-- [OPERATIONS.md](OPERATIONS.md) - Setup guide, deployment, troubleshooting
+- [OPERATIONS.md](OPERATIONS.md) - Setup, configuration, and troubleshooting
+
+**Enterprise Features** (if enabled)
+- [ENTERPRISE_FEATURES.md](ENTERPRISE_FEATURES.md) - Complete enterprise module reference
+- [ENTERPRISE_DEPLOYMENT_GUIDE.md](ENTERPRISE_DEPLOYMENT_GUIDE.md) - Enterprise deployment steps
+- [WHATS_NEW.md](WHATS_NEW.md) - Feature changelog
+- [ENHANCEMENT_SUMMARY.md](ENHANCEMENT_SUMMARY.md) - Summary of enterprise enhancements
+
+**CI/CD Documentation**
+- `.azure-pipelines/` - Azure DevOps pipeline (consolidated)
+- [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md) - GitHub Actions workflow setup
 
 **See Also**
 - `dbt/models/schema.yml` - Model documentation
@@ -250,21 +299,29 @@ Define tests in `dbt/models/schema.yml`
 |-----------|---------|---------|
 | dbt | 1.5+ | Data transformation & testing |
 | Databricks | Latest | Data warehouse & asset bundles |
-| Python | 3.9+ | Orchestration & scripts |
-| Azure DevOps | Cloud | CI/CD pipelines |
+| Python | 3.9+ | Orchestration, enterprise modules, scripts |
+| Azure DevOps | Cloud | CI/CD pipelines (consolidated) |
+| GitHub Actions | Cloud | CI/CD workflows (consolidated) |
+| Monitoring | App Insights, Datadog | Telemetry, health checks, performance |
+| Data Governance | Custom | Classification, PII detection, SLA framework |
+| Compliance | Custom | GDPR, CCPA, SOX, HIPAA audit logging & reports |
 | Bandit | 1.7+ | Python security scanning |
 | Semgrep | Latest | SQL/infrastructure scanning |
 | pip-audit | Latest | Dependency vulnerability scanning |
 | detect-secrets | Latest | Secret detection |
+| sqlfluff | Latest | SQL linting & formatting |
 
 ## 📖 Next Steps
 
 1. **Clone & Setup**: Follow Quick Start above
 2. **Customize Models**: Edit `dbt/models/` for your data
-3. **Configure Azure DevOps**: Create pipelines from `.azure-pipelines/` files
+3. **Configure CI/CD**: Choose one or both:
+   - **Azure DevOps**: Push repository and configure pipeline from `azure-pipelines.yml`
+   - **GitHub Actions**: Push to GitHub; workflows auto-activate from `.github/workflows/`
 4. **Set Up Environments**: Configure Databricks connections in `.env`
 5. **Deploy**: Run `python scripts/deploy.py --target dev`
-6. **Enable SAST**: Configure security scanning in pipeline
+6. **Enable SAST**: Security scanning runs automatically in CI/CD
+7. **(Optional) Enable Enterprise Features**: See [ENTERPRISE_DEPLOYMENT_GUIDE.md](ENTERPRISE_DEPLOYMENT_GUIDE.md)
 
 ## 🤝 Contributing
 
