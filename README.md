@@ -297,16 +297,6 @@ dbt parse --profiles-dir dbt
 make security-audit
 ```
 
-## 📞 Support
 
-- **Docs**: [dbt](https://docs.getdbt.com), [Databricks](https://docs.databricks.com)
-- **Issues**: Check OPERATIONS.md troubleshooting section
-- **Team**: Contact data engineering (@channel)
 
-## 📜 License
 
-[Your License Here]
-
----
-
-**Status**: ✅ Production Ready | **Last Updated**: Feb 15, 2026
