@@ -7,6 +7,7 @@ Includes enterprise monitoring, governance, and compliance tracking
 import os
 import sys
 import subprocess
+import shlex
 import argparse
 import time
 import json
@@ -171,6 +172,17 @@ def run_dbt(command: str, target: str = "dev", profile_dir: str = None, **kwargs
     return success, total_duration
 
 
+def should_run_dbt_deps() -> bool:
+    """Run dbt deps only when packages are not installed or packages.yml changed."""
+    packages_lock = Path("dbt") / "dbt_packages"
+    packages_yml = Path("dbt") / "packages.yml"
+    if not packages_yml.exists():
+        return False
+    if not packages_lock.exists():
+        return True
+    return packages_yml.stat().st_mtime > packages_lock.stat().st_mtime
+
+
 def main():
     """Main deployment orchestration with enterprise telemetry"""
     # Initialize telemetry and audit logging
@@ -271,11 +283,14 @@ def main():
         print(f"# Running dbt against {args.target}")
         print(f"{'#'*60}")
         
-        # Install dependencies
-        deps_success, deps_duration = run_dbt("deps", args.target, "profiles.yml")
-        if not deps_success:
-            print("\n❌ dbt deps failed")
-            success = False
+        # Install dependencies only when needed.
+        if should_run_dbt_deps():
+            deps_success, deps_duration = run_dbt("deps", args.target, "profiles.yml")
+            if not deps_success:
+                print("\n❌ dbt deps failed")
+                success = False
+        else:
+            print("\nℹ️  Skipping dbt deps (no package changes detected)")
         
         # Run models
         if success:

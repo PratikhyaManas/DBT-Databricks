@@ -5,7 +5,6 @@ Load sample test data to Databricks for dbt testing
 
 import os
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.data_types import StructType, StructField, StringType, LongType
 import pandas as pd
 
 
@@ -31,7 +30,6 @@ def create_sample_customers(ws: WorkspaceClient, catalog: str, schema: str):
     
     # Write to Databricks
     table_path = f"{catalog}.{schema}.customers"
-    spark_df = ws.tables.get(table_path)
     df.to_spark().write.mode("overwrite").option("mergeSchema", "true").saveAsTable(table_path)
     
     print(f"✅ Created sample customers table: {table_path}")

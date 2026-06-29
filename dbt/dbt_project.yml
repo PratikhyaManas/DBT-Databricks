@@ -11,7 +11,7 @@ profile: 'databricks_dev'
 model-paths: ["models"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
-data-paths: ["data"]
+seed-paths: ["data"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 target-path: "target"

@@ -17,6 +17,7 @@ pool:
 variables:
   pythonVersion: '3.9'
   DBT_PROFILES_DIR: '$(System.DefaultWorkingDirectory)/dbt'
+  PIP_CACHE_DIR: '$(Pipeline.Workspace)/.pip-cache'
 
 stages:
   # ========================================
@@ -36,7 +37,7 @@ stages:
 
           - script: |
               python -m pip install --upgrade pip
-              pip install databricks-sdk -q
+              pip install -r requirements.txt -q
             displayName: 'Install Databricks SDK'
 
           - script: |
@@ -101,7 +102,7 @@ stages:
 
           - script: |
               python -m pip install --upgrade pip
-              pip install dbt-databricks databricks-sdk pyyaml
+              pip install -r requirements.txt
             displayName: 'Install Python Dependencies'
 
   - stage: Validate
@@ -114,10 +115,6 @@ stages:
           - task: UsePythonVersion@0
             inputs:
               versionSpec: '$(pythonVersion)'
-
-          - script: |
-              pip install dbt-databricks -q
-            displayName: 'Install dbt'
 
           - script: |
               cd dbt
@@ -149,10 +146,6 @@ stages:
               versionSpec: '$(pythonVersion)'
 
           - script: |
-              pip install dbt-databricks -q
-            displayName: 'Install dbt'
-
-          - script: |
               cd dbt
               dbt deps --profiles-dir $(DBT_PROFILES_DIR)
             displayName: 'Install dbt Dependencies'
@@ -163,14 +156,14 @@ stages:
 
           - script: |
               cd dbt
-              dbt run --profiles-dir $(DBT_PROFILES_DIR) --select state:modified+ --state ./target
+              dbt run --profiles-dir $(DBT_PROFILES_DIR) --select state:modified+
             displayName: 'Run Modified Models (Slim CI)'
             env:
               DATABRICKS_HOST: $(DATABRICKS_HOST)
               DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
               DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
               DBT_ENV: dev
-            continueOnError: true
+            continueOnError: 'true'
 
           - script: |
               cd dbt
@@ -207,22 +200,22 @@ stages:
           - script: |
               bandit -r scripts/ -f json -o $(Build.ArtifactStagingDirectory)/bandit-report.json
             displayName: 'Python Security Scan (Bandit)'
-            continueOnError: true
+            continueOnError: 'true'
 
           - script: |
               semgrep --config p/databricks dbt/models/ -o $(Build.ArtifactStagingDirectory)/semgrep-report.json --json 2>&1 | head -100
             displayName: 'SQL Security Scan (Semgrep)'
-            continueOnError: true
+            continueOnError: 'true'
 
           - script: |
               detect-secrets scan --baseline .secrets.baseline
             displayName: 'Secrets Detection'
-            continueOnError: true
+            continueOnError: 'true'
 
           - script: |
               pip-audit --desc > $(Build.ArtifactStagingDirectory)/pip-audit.txt
             displayName: 'Dependency Vulnerability Scan'
-            continueOnError: true
+            continueOnError: 'true'
 
           - task: PublishBuildArtifacts@1
             condition: always()
@@ -242,13 +235,9 @@ stages:
               versionSpec: '$(pythonVersion)'
 
           - script: |
-              pip install sqlfluff -q
-            displayName: 'Install sqlfluff'
-
-          - script: |
               sqlfluff vet --dialect databricks dbt/models/
             displayName: 'Run SQL Linting'
-            continueOnError: true
+            continueOnError: 'true'
 
   - stage: Documentation
     displayName: 'Build Documentation'
@@ -262,10 +251,6 @@ stages:
               versionSpec: '$(pythonVersion)'
 
           - script: |
-              pip install dbt-databricks -q
-            displayName: 'Install dbt'
-
-          - script: |
               cd dbt
               dbt docs generate --profiles-dir $(DBT_PROFILES_DIR)
             displayName: 'Generate dbt Docs'
@@ -274,7 +259,7 @@ stages:
               DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
               DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
               DBT_ENV: dev
-            continueOnError: true
+            continueOnError: 'true'
 
           - task: PublishBuildArtifacts@1
             condition: always()
@@ -311,7 +296,7 @@ stages:
 
                 - script: |
                     python -m pip install --upgrade pip
-                    pip install dbt-databricks databricks-sdk pyyaml
+                    pip install -r requirements.txt
                   displayName: 'Install Dependencies'
 
                 - script: |
@@ -387,7 +372,7 @@ stages:
 
                 - script: |
                     python -m pip install --upgrade pip
-                    pip install dbt-databricks databricks-sdk pyyaml
+                    pip install -r requirements.txt
                   displayName: 'Install Dependencies'
 
                 - script: |
@@ -420,9 +405,8 @@ stages:
                     DBT_ENV: prod
 
                 - script: |
-                    pip install databricks-labs-blueprint
                     databricks bundle deploy --target prod -C databricks_bundles/prod
-                  displayName: 'Deploy Production DAB'
+                  displayName: 'Deploy Databricks Asset Bundle'
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
                     DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)

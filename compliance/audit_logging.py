@@ -78,6 +78,8 @@ class AuditLogger:
     def _setup_audit_logger(log_file: str) -> logging.Logger:
         """Setup dedicated audit logger"""
         logger = logging.getLogger("audit")
+        if logger.handlers:
+            return logger
         
         # File handler for audit logs
         handler = logging.FileHandler(log_file)
@@ -138,9 +140,16 @@ class AuditLogger:
         )
         self._write_log(log)
 
-    def log_pipeline_execution(self, user: str, pipeline_name: str,
-                              models_run: int, tests_passed: int, tests_failed: int):
+    def log_pipeline_execution(
+        self,
+        pipeline_name: str,
+        environment: str,
+        status: str,
+        details: Optional[Dict[str, Any]] = None,
+        user: str = "system",
+    ):
         """Log pipeline execution for audit trail"""
+        details = details or {}
         log = AuditLog(
             event_type=AuditEventType.PIPELINE_RUN,
             timestamp=datetime.utcnow().isoformat(),
@@ -148,23 +157,24 @@ class AuditLogger:
             action="execute",
             resource=pipeline_name,
             resource_type="pipeline",
-            details={
-                "models_run": models_run,
-                "tests_passed": tests_passed,
-                "tests_failed": tests_failed
-            },
-            status="success" if tests_failed == 0 else "partial"
+            details={"environment": environment, **details},
+            status=status
         )
         self._write_log(log)
 
-    def log_security_event(self, event_description: str, severity: str,
-                          user: str, details: Dict[str, Any]):
+    def log_security_event(
+        self,
+        event_type: str,
+        details: Dict[str, Any],
+        severity: str = "ERROR",
+        user: str = "system",
+    ):
         """Log security-relevant events"""
         log = AuditLog(
             event_type=AuditEventType.SECURITY_EVENT,
             timestamp=datetime.utcnow().isoformat(),
             user=user,
-            action="security_event",
+            action=event_type,
             resource="system",
             resource_type="security",
             details=details,
@@ -172,7 +182,7 @@ class AuditLogger:
         )
         self.logger.log(
             getattr(logging, severity),
-            f"SECURITY: {event_description} - {log.to_json()}"
+            f"SECURITY: {event_type} - {log.to_json()}"
         )
         self.logs.append(log)
 

@@ -7,6 +7,7 @@ import os
 import time
 import json
 import logging
+from collections import deque
 from typing import Dict, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -58,8 +59,8 @@ class TelemetryClient:
     def __init__(self, service_name: str = "dbt-databricks"):
         self.service_name = service_name
         self.logger = self._setup_logger()
-        self.metrics: list[Metric] = []
-        self.events: list[Event] = []
+        self.metrics = deque(maxlen=1000)
+        self.events = deque(maxlen=1000)
         
         # Initialize backends
         self.app_insights_enabled = bool(os.getenv("APPINSIGHTS_INSTRUMENTATION_KEY"))
@@ -73,6 +74,9 @@ class TelemetryClient:
     def _setup_logger(self) -> logging.Logger:
         """Setup structured logging with JSON output"""
         logger = logging.getLogger(self.service_name)
+        if logger.handlers:
+            return logger
+
         handler = logging.StreamHandler()
         
         # JSON formatter for structured logging
@@ -106,11 +110,19 @@ class TelemetryClient:
             self.logger.warning("Datadog SDK not installed")
             self.datadog_enabled = False
 
-    def record_metric(self, name: str, value: float, metric_type: MetricType,
-                     tags: Optional[Dict[str, str]] = None):
+    def record_metric(
+        self,
+        name: str,
+        value: float,
+        metric_type: MetricType = MetricType.GAUGE,
+        tags: Optional[Dict[str, str]] = None,
+        properties: Optional[Dict[str, str]] = None,
+    ):
         """Record a custom metric"""
         if tags is None:
             tags = {}
+        if properties:
+            tags.update({k: str(v) for k, v in properties.items()})
         
         tags["service"] = self.service_name
         metric = Metric(name, value, metric_type, tags, datetime.utcnow().isoformat())
@@ -122,9 +134,17 @@ class TelemetryClient:
         if self.datadog_enabled:
             self._send_to_datadog(metric)
 
-    def record_event(self, event_name: str, severity: SeverityLevel,
-                    message: str, properties: Optional[Dict[str, Any]] = None):
+    def record_event(
+        self,
+        event_name: Optional[str] = None,
+        severity: SeverityLevel = SeverityLevel.INFO,
+        message: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        name: Optional[str] = None,
+    ):
         """Record a custom event"""
+        event_name = event_name or name or "event"
+        message = message or event_name
         if properties is None:
             properties = {}
         
@@ -214,10 +234,14 @@ class HealthCheck:
     def __init__(self, telemetry: TelemetryClient):
         self.telemetry = telemetry
 
-    def check_databricks_connection(self, host: str, token: str) -> bool:
+    def check_databricks_connection(self, host: Optional[str] = None, token: Optional[str] = None) -> bool:
         """Check Databricks connectivity"""
         try:
             from databricks.sdk import WorkspaceClient
+            host = host or os.getenv("DATABRICKS_HOST")
+            token = token or os.getenv("DATABRICKS_TOKEN")
+            if not host or not token:
+                raise ValueError("Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
             ws = WorkspaceClient(host=host, token=token)
             ws.workspace.list_objects(path="/")
             self.telemetry.record_metric(
@@ -276,6 +300,29 @@ class HealthCheck:
                 f"Schema {catalog}.{schema} not found",
                 {"catalog": catalog, "schema": schema}
             )
+            return False
+
+    def validate_schema(self, target: str) -> bool:
+        """Compatibility wrapper used by deployment scripts."""
+        try:
+            from databricks.sdk import WorkspaceClient
+
+            host = os.getenv("DATABRICKS_HOST")
+            token = os.getenv("DATABRICKS_TOKEN")
+            if not host or not token:
+                return False
+
+            catalog = os.getenv("CATALOG", "hive_metastore")
+            schema_map = {
+                "dev": os.getenv("DATA_SCHEMA", "raw"),
+                "staging": os.getenv("STAGING_SCHEMA", "staging"),
+                "prod": os.getenv("MARTS_SCHEMA", "marts"),
+            }
+            schema = schema_map.get(target, schema_map["dev"])
+
+            ws = WorkspaceClient(host=host, token=token)
+            return self.check_schema_exists(catalog, schema, ws)
+        except Exception:
             return False
 
 
@@ -384,3 +431,8 @@ def initialize_telemetry(service_name: str = "dbt-databricks") -> TelemetryClien
     global _telemetry_client
     _telemetry_client = TelemetryClient(service_name)
     return _telemetry_client
+
+
+def get_health_check() -> HealthCheck:
+    """Return a health check helper bound to the global telemetry client."""
+    return HealthCheck(get_telemetry_client())
