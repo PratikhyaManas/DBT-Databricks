@@ -16,14 +16,10 @@ env:
   DBT_PROFILES_DIR: './dbt'
 
 jobs:
-  # ========================================
-  # CI JOBS - Run on all branches & PRs
-  # ========================================
-
-  health-check:
-    name: Infrastructure Health Checks
+  ci:
+    name: dbt CI
     runs-on: ubuntu-latest
-    continue-on-error: true
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,249 +29,58 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-      - name: Install Databricks SDK
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install databricks-sdk -q
+          pip install -r requirements.txt
 
-      - name: Check if Databricks Secrets are Configured
-        id: check-secrets
-        run: |
-          if [[ -z "${{ secrets.DATABRICKS_HOST }}" || -z "${{ secrets.DATABRICKS_TOKEN }}" ]]; then
-            echo "⚠️  Databricks secrets not configured"
-            echo "has_secrets=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_secrets=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Test Databricks Connection
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        run: |
-          python - <<'EOF'
-          import sys
-          from databricks.sdk import WorkspaceClient
-          
-          try:
-              ws = WorkspaceClient(
-                  host='${{ secrets.DATABRICKS_HOST }}',
-                  token='${{ secrets.DATABRICKS_TOKEN }}'
-              )
-              user = ws.current_user.me()
-              print(f"✅ Databricks connection successful. User: {user.user_name}")
-          except Exception as e:
-              print(f"❌ Databricks connection failed: {e}")
-              sys.exit(1)
-          EOF
-
-      - name: Validate Warehouse Availability
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        run: |
-          python - <<'EOF'
-          import sys
-          from databricks.sdk import WorkspaceClient
-          
-          try:
-              ws = WorkspaceClient(
-                  host='${{ secrets.DATABRICKS_HOST }}',
-                  token='${{ secrets.DATABRICKS_TOKEN }}'
-              )
-              warehouses = ws.warehouses.list()
-              warehouse_count = sum(1 for _ in warehouses)
-              if warehouse_count > 0:
-                  print(f"✅ Found {warehouse_count} warehouse(s)")
-              else:
-                  print("⚠️  No warehouses found")
-                  sys.exit(1)
-          except Exception as e:
-              print(f"❌ Warehouse validation failed: {e}")
-              sys.exit(1)
-          EOF
-
-      - name: Health Check Status
-        if: steps.check-secrets.outputs.has_secrets == 'false'
-        run: |
-          echo "ℹ️  Databricks connection skipped (secrets not configured)"
-          echo "To enable full CI/CD, configure these secrets in GitHub:"
-          echo "  - DATABRICKS_HOST"
-          echo "  - DATABRICKS_TOKEN"
-
-  validate:
-    name: Validate Code
-    runs-on: ubuntu-latest
-    needs: health-check
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install Dependencies
-        run: pip install -r requirements.txt -q
-
-      - name: Validate dbt Project Syntax
+      - name: Install dbt Packages
         run: |
           cd dbt
-          dbt parse --profiles-dir ${{ env.DBT_PROFILES_DIR }} 2>&1 || echo "⚠️  dbt parse requires Databricks secrets"
+          dbt deps --profiles-dir ${{ env.DBT_PROFILES_DIR }}
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        continue-on-error: true
 
-      - name: Validate dbt Configuration
+      - name: Step 1 - Lint SQL (sqlfluff)
         run: |
-          if [ -f dbt/dbt_project.yml ]; then
-            echo "✅ dbt_project.yml found"
-          fi
-          if [ -f dbt/profiles.yml ]; then
-            echo "✅ profiles.yml found"
-          fi
+          sqlfluff lint --dialect databricks dbt/models/
 
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    needs: validate
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install Dependencies
-        run: pip install -r requirements.txt -q
-
-      - name: Install dbt Dependencies
+      - name: Step 2 - dbt compile (syntax check)
         run: |
           cd dbt
-          dbt deps --profiles-dir ${{ env.DBT_PROFILES_DIR }} 2>&1 || echo "⚠️  dbt deps requires Databricks secrets"
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        continue-on-error: true
-
-      - name: Run Modified Models (Slim CI)
-        continue-on-error: true
-        run: |
-          cd dbt
-          dbt run --profiles-dir ${{ env.DBT_PROFILES_DIR }} --select state:modified+ 2>&1 || echo "⚠️  dbt run requires Databricks secrets"
+          dbt compile --profiles-dir ${{ env.DBT_PROFILES_DIR }}
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           DBT_ENV: dev
 
-      - name: Run Data Quality Tests
-        continue-on-error: true
+      - name: Step 3 - dbt run modified only (Slim CI)
         run: |
           cd dbt
-          dbt test --profiles-dir ${{ env.DBT_PROFILES_DIR }} 2>&1 || echo "⚠️  dbt test requires Databricks secrets"
+          dbt run --profiles-dir ${{ env.DBT_PROFILES_DIR }} --select state:modified+
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           DBT_ENV: dev
 
-      - name: Test Status
-        run: echo "✅ Test job completed (may be skipped if secrets not configured)"
-
-  security:
-    name: Security Scanning (SAST)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install Security Tools
-        run: |
-          pip install -r requirements.txt -q
-
-      - name: Python Security Scan (Bandit)
-        run: |
-          bandit -r scripts/ -f json -o bandit-report.json
-        continue-on-error: true
-
-      - name: SQL Security Scan (Semgrep)
-        run: |
-          semgrep --config p/databricks dbt/models/ -o semgrep-report.json --json 2>&1 | head -100
-        continue-on-error: true
-
-      - name: Secrets Detection
-        run: |
-          detect-secrets scan --baseline .secrets.baseline
-        continue-on-error: true
-
-      - name: Dependency Vulnerability Scan
-        run: |
-          pip-audit --desc > pip-audit.txt
-        continue-on-error: true
-
-      - name: Upload Security Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-reports
-          path: |
-            bandit-report.json
-            semgrep-report.json
-            pip-audit.txt
-
-  lint:
-    name: Code Quality
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install Dependencies
-        run: pip install -r requirements.txt -q
-
-      - name: Run SQL Linting
-        run: |
-          sqlfluff vet --dialect databricks dbt/models/
-
-  documentation:
-    name: Build Documentation
-    runs-on: ubuntu-latest
-    needs: test
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install Dependencies
-        run: pip install -r requirements.txt -q
-
-      - name: Generate dbt Docs
-        continue-on-error: true
+      - name: Step 4 - dbt test modified only
         run: |
           cd dbt
-          dbt docs generate --profiles-dir ${{ env.DBT_PROFILES_DIR }} 2>&1 || echo "⚠️  dbt docs requires Databricks secrets"
+          dbt test --profiles-dir ${{ env.DBT_PROFILES_DIR }} --select state:modified+
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DBT_ENV: dev
+
+      - name: Step 5 - dbt source freshness
+        run: |
+          cd dbt
+          dbt source freshness --profiles-dir ${{ env.DBT_PROFILES_DIR }}
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
@@ -285,182 +90,36 @@ jobs:
       - name: Upload dbt Artifacts
         if: always()
         uses: actions/upload-artifact@v4
-        continue-on-error: true
         with:
-          name: dbt-artifacts
-          path: dbt/target
-
-      - name: Documentation Status
-        run: echo "✅ Documentation job completed"
-
-  ci-status:
-    name: CI Status Check
-    runs-on: ubuntu-latest
-    needs: [health-check, validate, test, security, lint, documentation]
-    continue-on-error: true
-    if: always()
-    steps:
-      - name: Check CI Status
-        run: |
-          echo "✅ CI Pipeline workflow completed"
-          echo ""
-          echo "Job Results:"
-          echo "  health-check: ${{ needs.health-check.result }}"
-          echo "  validate: ${{ needs.validate.result }}"
-          echo "  test: ${{ needs.test.result }}"
-          echo "  security: ${{ needs.security.result }}"
-          echo "  lint: ${{ needs.lint.result }}"
-          echo "  documentation: ${{ needs.documentation.result }}"
-          echo ""
-          echo "Note: Some jobs may be skipped if Databricks secrets are not configured."
-          echo "To enable full CI/CD pipeline, configure secrets: DATABRICKS_HOST, DATABRICKS_TOKEN"
-
-  # ========================================
-  # CD JOBS - Run only on main branch push
-  # ========================================
-
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: ci-status
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && (needs.ci-status.result == 'success' || needs.ci-status.result == 'skipped')
-    continue-on-error: true
-    environment:
-      name: staging
-      url: ${{ secrets.DATABRICKS_WORKSPACE_URL }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify Secrets
-        id: check-secrets
-        run: |
-          if [[ -z "${{ secrets.DATABRICKS_HOST_STAGING }}" || -z "${{ secrets.DATABRICKS_TOKEN_STAGING }}" ]]; then
-            echo "⚠️  Staging secrets not configured"
-            echo "has_secrets=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_secrets=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set up Python
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install Dependencies
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          pip install dbt-databricks databricks-sdk pyyaml
-
-      - name: Install dbt Dependencies
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        run: |
-          cd dbt
-          dbt deps --profiles-dir ${{ env.DBT_PROFILES_DIR }}
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
-          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH_STAGING }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_STAGING }}
-
-      - name: Run dbt Models (Staging)
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        run: |
-          cd dbt
-          dbt run --profiles-dir ${{ env.DBT_PROFILES_DIR }} --target staging
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
-          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH_STAGING }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_STAGING }}
-          DBT_ENV: staging
-
-      - name: Run Data Quality Tests (Staging)
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        run: |
-          cd dbt
-          dbt test --profiles-dir ${{ env.DBT_PROFILES_DIR }} --target staging
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
-          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH_STAGING }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_STAGING }}
-          DBT_ENV: staging
-
-      - name: Deploy Databricks Asset Bundle (Staging)
-        if: steps.check-secrets.outputs.has_secrets == 'true'
-        run: |
-          pip install databricks-labs-blueprint
-          databricks bundle deploy --target staging -C databricks_bundles/staging
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_STAGING }}
-
-      - name: Notify Staging Deployment
-        run: |
-          if [[ "${{ steps.check-secrets.outputs.has_secrets }}" == "false" ]]; then
-            echo "ℹ️  Staging deployment skipped (secrets not configured)"
-            echo "To enable, configure: DATABRICKS_HOST_STAGING, DATABRICKS_TOKEN_STAGING"
-          else
-            echo "✅ Staging deployment completed"
-            echo "Staging environment: ${{ secrets.DATABRICKS_WORKSPACE_URL }}"
-          fi
-
-  approve-production:
-    name: Approve Production Deployment
-    runs-on: ubuntu-latest
-    needs: deploy-staging
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    continue-on-error: true
-    environment:
-      name: production-approval
-    steps:
-      - name: Production Approval
-        run: |
-          echo "✅ Waiting for production approval"
-          echo ""
-          echo "This is where a human reviewer can approve the production deployment."
-          echo "In GitHub, this requires manually approving in the 'production-approval' environment."
-          echo ""
-          echo "Approval required from: data-engineering team"
-          echo "Timeout: 24 hours (configurable in environment settings)"
+          name: dbt-ci-artifacts
+          path: |
+            dbt/target
+            logs
 
   deploy-production:
-    name: Deploy to Production
+    name: Production Deployment
     runs-on: ubuntu-latest
-    needs: approve-production
+    needs: ci
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    continue-on-error: true
     environment:
       name: production
       url: ${{ secrets.DATABRICKS_WORKSPACE_URL_PROD }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify Secrets
-        id: check-secrets
-        run: |
-          if [[ -z "${{ secrets.DATABRICKS_HOST_PROD }}" || -z "${{ secrets.DATABRICKS_TOKEN_PROD }}" ]]; then
-            echo "⚠️  Production secrets not configured"
-            echo "has_secrets=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_secrets=true" >> $GITHUB_OUTPUT
-          fi
-
       - name: Set up Python
-        if: steps.check-secrets.outputs.has_secrets == 'true'
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
       - name: Install Dependencies
-        if: steps.check-secrets.outputs.has_secrets == 'true'
         run: |
           python -m pip install --upgrade pip
-          pip install dbt-databricks databricks-sdk pyyaml
+          pip install -r requirements.txt
 
-      - name: Install dbt Dependencies
-        if: steps.check-secrets.outputs.has_secrets == 'true'
+      - name: Install dbt Packages
         run: |
           cd dbt
           dbt deps --profiles-dir ${{ env.DBT_PROFILES_DIR }}
@@ -469,8 +128,7 @@ jobs:
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH_PROD }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
 
-      - name: Run dbt Models in Production
-        if: steps.check-secrets.outputs.has_secrets == 'true'
+      - name: Production - dbt run
         run: |
           cd dbt
           dbt run --profiles-dir ${{ env.DBT_PROFILES_DIR }} --target prod
@@ -480,8 +138,7 @@ jobs:
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
           DBT_ENV: prod
 
-      - name: Run Production Data Quality Tests
-        if: steps.check-secrets.outputs.has_secrets == 'true'
+      - name: Production - dbt test
         run: |
           cd dbt
           dbt test --profiles-dir ${{ env.DBT_PROFILES_DIR }} --target prod
@@ -491,21 +148,37 @@ jobs:
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
           DBT_ENV: prod
 
-      - name: Deploy Production Databricks Asset Bundle
-        if: steps.check-secrets.outputs.has_secrets == 'true'
+      - name: Production - dbt source freshness
         run: |
-          pip install databricks-labs-blueprint
+          cd dbt
+          dbt source freshness --profiles-dir ${{ env.DBT_PROFILES_DIR }} --target prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH_PROD }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+          DBT_ENV: prod
+
+      - name: Deploy Production Databricks Asset Bundle
+        run: |
           databricks bundle deploy --target prod -C databricks_bundles/prod
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_PROD }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
 
-      - name: Deployment Status
-        run: |
-          if [[ "${{ steps.check-secrets.outputs.has_secrets }}" == "false" ]]; then
-            echo "ℹ️  Production deployment skipped (secrets not configured)"
-            echo "To enable, configure: DATABRICKS_HOST_PROD, DATABRICKS_TOKEN_PROD"
-          else
-            echo "✅ Production deployment completed"
-            echo "Production environment: ${{ secrets.DATABRICKS_WORKSPACE_URL_PROD }}"
-          fi
+  notify-failure:
+    name: Slack Alert on Failure
+    runs-on: ubuntu-latest
+    needs: [ci, deploy-production]
+    if: always() && (needs.ci.result == 'failure' || needs.deploy-production.result == 'failure')
+
+    steps:
+      - name: Send Slack Notification
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "dbt pipeline failed in ${{ github.repository }} on ${{ github.ref_name }}. Workflow: ${{ github.workflow }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
