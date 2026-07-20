@@ -133,6 +133,34 @@ python scripts/deploy.py --target staging
 python scripts/deploy.py --target prod
 ```
 
+### Metadata-Driven Pipeline Deploy
+
+The metadata runner decouples orchestration logic from code. Pipelines are defined in [pipelines/pipeline_metadata.yaml](pipelines/pipeline_metadata.yaml) and executed by [scripts/metadata_pipeline.py](scripts/metadata_pipeline.py).
+
+```bash
+# list pipelines
+python scripts/metadata_pipeline.py --list-pipelines
+
+# full deployment
+python scripts/metadata_pipeline.py --pipeline full_deploy --target dev
+
+# run dbt only
+python scripts/metadata_pipeline.py --pipeline dbt_only --target staging
+
+# dry run
+python scripts/metadata_pipeline.py --pipeline full_deploy --target prod --dry-run
+```
+
+Make targets:
+
+```bash
+make pipeline-list
+make pipeline-dev
+make pipeline-staging
+make pipeline-prod
+make pipeline-run PIPELINE=full_deploy TARGET=dev
+```
+
 ### Rollback
 
 Preferred rollback:

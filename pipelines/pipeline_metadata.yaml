@@ -1,0 +1,65 @@
+version: 1
+
+defaults:
+  dbt_project_dir: dbt
+  profile_dir: profiles.yml
+  bundle_base_path: databricks_bundles
+  continue_on_error: false
+
+environments:
+  dev:
+    env:
+      DBT_ENV: dev
+  staging:
+    env:
+      DBT_ENV: staging
+  prod:
+    env:
+      DBT_ENV: prod
+
+pipelines:
+  full_deploy:
+    description: Run dbt and deploy Databricks bundle
+    steps:
+      - id: health_check
+        type: health_check
+      - id: dbt_deps
+        type: dbt
+        command: deps
+        if_changed_packages: true
+      - id: dbt_run
+        type: dbt
+        command: run
+      - id: dbt_test
+        type: dbt
+        command: test
+      - id: bundle_deploy
+        type: bundle
+        action: deploy
+        bundle_path: databricks_bundles/{target}
+
+  dbt_only:
+    description: Run dbt deps, models, and tests without bundle deployment
+    steps:
+      - id: health_check
+        type: health_check
+      - id: dbt_deps
+        type: dbt
+        command: deps
+        if_changed_packages: true
+      - id: dbt_run
+        type: dbt
+        command: run
+      - id: dbt_test
+        type: dbt
+        command: test
+
+  bundle_only:
+    description: Deploy Databricks bundle only
+    steps:
+      - id: health_check
+        type: health_check
+      - id: bundle_deploy
+        type: bundle
+        action: deploy
+        bundle_path: databricks_bundles/{target}

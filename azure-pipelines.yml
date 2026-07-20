@@ -4,12 +4,52 @@ trigger:
       - main
       - develop
       - feature/*
+  paths:
+    include:
+      - dbt/*
+      - dbt/**
+      - scripts/*
+      - scripts/**
+      - pipelines/*
+      - pipelines/**
+      - databricks.yml
+      - databricks_bundles/*
+      - databricks_bundles/**
+      - requirements.txt
+      - Makefile
+      - azure-pipelines.yml
+    exclude:
+      - README.md
+      - CHANGELOG.md
+      - OPERATIONS.md
+      - .github/*
+      - .github/**
 
 pr:
   branches:
     include:
       - main
       - develop
+  paths:
+    include:
+      - dbt/*
+      - dbt/**
+      - scripts/*
+      - scripts/**
+      - pipelines/*
+      - pipelines/**
+      - databricks.yml
+      - databricks_bundles/*
+      - databricks_bundles/**
+      - requirements.txt
+      - Makefile
+      - azure-pipelines.yml
+    exclude:
+      - README.md
+      - CHANGELOG.md
+      - OPERATIONS.md
+      - .github/*
+      - .github/**
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -18,6 +58,7 @@ variables:
   pythonVersion: '3.9'
   DBT_PROFILES_DIR: '$(System.DefaultWorkingDirectory)/dbt'
   PIP_CACHE_DIR: '$(Pipeline.Workspace)/.pip-cache'
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
 
 stages:
   # ========================================
@@ -35,9 +76,17 @@ stages:
               versionSpec: '$(pythonVersion)'
             displayName: 'Use Python $(pythonVersion)'
 
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+              path: '$(PIP_CACHE_DIR)'
+            displayName: 'Cache pip dependencies'
+
           - script: |
               python -m pip install --upgrade pip
-              pip install -r requirements.txt -q
+              pip install -r requirements.txt -q --cache-dir $(PIP_CACHE_DIR)
             displayName: 'Install Databricks SDK'
 
           - script: |
@@ -100,9 +149,17 @@ stages:
               versionSpec: '$(pythonVersion)'
             displayName: 'Use Python $(pythonVersion)'
 
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+              path: '$(PIP_CACHE_DIR)'
+            displayName: 'Cache pip dependencies'
+
           - script: |
               python -m pip install --upgrade pip
-              pip install -r requirements.txt
+              pip install -r requirements.txt --cache-dir $(PIP_CACHE_DIR)
             displayName: 'Install Python Dependencies'
 
   - stage: Validate
@@ -115,6 +172,19 @@ stages:
           - task: UsePythonVersion@0
             inputs:
               versionSpec: '$(pythonVersion)'
+
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+              path: '$(PIP_CACHE_DIR)'
+            displayName: 'Cache pip dependencies'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt --cache-dir $(PIP_CACHE_DIR)
+            displayName: 'Install Python Dependencies'
 
           - script: |
               cd dbt
@@ -134,6 +204,12 @@ stages:
               DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
               DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
 
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/dbt/target'
+              ArtifactName: 'dbt-state'
+
   - stage: Test
     displayName: 'Run Tests'
     dependsOn: Validate
@@ -144,6 +220,35 @@ stages:
           - task: UsePythonVersion@0
             inputs:
               versionSpec: '$(pythonVersion)'
+
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+              path: '$(PIP_CACHE_DIR)'
+            displayName: 'Cache pip dependencies'
+
+          - task: Cache@2
+            inputs:
+              key: 'dbt-packages | "$(Agent.OS)" | dbt/packages.yml'
+              restoreKeys: |
+                dbt-packages | "$(Agent.OS)"
+              path: '$(System.DefaultWorkingDirectory)/dbt/dbt_packages'
+            displayName: 'Cache dbt packages'
+
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'dbt-state'
+              downloadPath: '$(Pipeline.Workspace)/dbt-state'
+            displayName: 'Download dbt state artifact'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt --cache-dir $(PIP_CACHE_DIR)
+            displayName: 'Install Python Dependencies'
 
           - script: |
               cd dbt
@@ -156,14 +261,18 @@ stages:
 
           - script: |
               cd dbt
-              dbt run --profiles-dir $(DBT_PROFILES_DIR) --select state:modified+
+              if [ -f "$(Pipeline.Workspace)/dbt-state/dbt-state/manifest.json" ]; then
+                dbt run --profiles-dir $(DBT_PROFILES_DIR) --select state:modified+ --state "$(Pipeline.Workspace)/dbt-state/dbt-state"
+              else
+                echo "No prior manifest found; running full model set"
+                dbt run --profiles-dir $(DBT_PROFILES_DIR)
+              fi
             displayName: 'Run Modified Models (Slim CI)'
             env:
               DATABRICKS_HOST: $(DATABRICKS_HOST)
               DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
               DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
               DBT_ENV: dev
-            continueOnError: 'true'
 
           - script: |
               cd dbt
@@ -175,12 +284,11 @@ stages:
               DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
               DBT_ENV: dev
 
-          - task: PublishTestResults@2
+          - task: PublishBuildArtifacts@1
             condition: always()
             inputs:
-              testResultsFormat: 'JUnit'
-              testResultsFiles: '**/target/test-results.json'
-              testRunTitle: 'dbt Test Results'
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/dbt/target'
+              ArtifactName: 'dbt-test-artifacts'
 
   - stage: Security
     displayName: 'Security Scanning (SAST)'
@@ -193,29 +301,34 @@ stages:
             inputs:
               versionSpec: '$(pythonVersion)'
 
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+              path: '$(PIP_CACHE_DIR)'
+            displayName: 'Cache pip dependencies'
+
           - script: |
-              pip install bandit semgrep detect-secrets pip-audit -q
+              python -m pip install --upgrade pip
+              pip install bandit semgrep detect-secrets pip-audit -q --cache-dir $(PIP_CACHE_DIR)
             displayName: 'Install Security Tools'
 
           - script: |
               bandit -r scripts/ -f json -o $(Build.ArtifactStagingDirectory)/bandit-report.json
             displayName: 'Python Security Scan (Bandit)'
-            continueOnError: 'true'
 
           - script: |
               semgrep --config p/databricks dbt/models/ -o $(Build.ArtifactStagingDirectory)/semgrep-report.json --json 2>&1 | head -100
             displayName: 'SQL Security Scan (Semgrep)'
-            continueOnError: 'true'
 
           - script: |
               detect-secrets scan --baseline .secrets.baseline
             displayName: 'Secrets Detection'
-            continueOnError: 'true'
 
           - script: |
               pip-audit --desc > $(Build.ArtifactStagingDirectory)/pip-audit.txt
             displayName: 'Dependency Vulnerability Scan'
-            continueOnError: 'true'
 
           - task: PublishBuildArtifacts@1
             condition: always()
@@ -234,10 +347,22 @@ stages:
             inputs:
               versionSpec: '$(pythonVersion)'
 
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+              path: '$(PIP_CACHE_DIR)'
+            displayName: 'Cache pip dependencies'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt --cache-dir $(PIP_CACHE_DIR)
+            displayName: 'Install Python Dependencies'
+
           - script: |
               sqlfluff vet --dialect databricks dbt/models/
             displayName: 'Run SQL Linting'
-            continueOnError: 'true'
 
   - stage: Documentation
     displayName: 'Build Documentation'
@@ -250,6 +375,19 @@ stages:
             inputs:
               versionSpec: '$(pythonVersion)'
 
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+              path: '$(PIP_CACHE_DIR)'
+            displayName: 'Cache pip dependencies'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt --cache-dir $(PIP_CACHE_DIR)
+            displayName: 'Install Python Dependencies'
+
           - script: |
               cd dbt
               dbt docs generate --profiles-dir $(DBT_PROFILES_DIR)
@@ -259,7 +397,6 @@ stages:
               DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH)
               DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
               DBT_ENV: dev
-            continueOnError: 'true'
 
           - task: PublishBuildArtifacts@1
             condition: always()
@@ -294,47 +431,35 @@ stages:
                     versionSpec: '$(pythonVersion)'
                   displayName: 'Use Python $(pythonVersion)'
 
+                - task: Cache@2
+                  inputs:
+                    key: 'pip | "$(Agent.OS)" | requirements.txt'
+                    restoreKeys: |
+                      pip | "$(Agent.OS)"
+                    path: '$(PIP_CACHE_DIR)'
+                  displayName: 'Cache pip dependencies'
+
+                - task: Cache@2
+                  inputs:
+                    key: 'dbt-packages | "$(Agent.OS)" | dbt/packages.yml'
+                    restoreKeys: |
+                      dbt-packages | "$(Agent.OS)"
+                    path: '$(System.DefaultWorkingDirectory)/dbt/dbt_packages'
+                  displayName: 'Cache dbt packages'
+
                 - script: |
                     python -m pip install --upgrade pip
-                    pip install -r requirements.txt
+                    pip install -r requirements.txt --cache-dir $(PIP_CACHE_DIR)
                   displayName: 'Install Dependencies'
 
                 - script: |
-                    cd dbt
-                    dbt deps --profiles-dir $(DBT_PROFILES_DIR)
-                  displayName: 'Install dbt Dependencies'
-                  env:
-                    DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
-                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_STAGING)
-                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
-
-                - script: |
-                    cd dbt
-                    dbt run --profiles-dir $(DBT_PROFILES_DIR) --target staging
-                  displayName: 'Run dbt Models'
+                    python scripts/metadata_pipeline.py --pipeline full_deploy --target staging
+                  displayName: 'Run Metadata Pipeline (Staging)'
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
                     DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_STAGING)
                     DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
                     DBT_ENV: staging
-
-                - script: |
-                    cd dbt
-                    dbt test --profiles-dir $(DBT_PROFILES_DIR) --target staging
-                  displayName: 'Run Data Quality Tests'
-                  env:
-                    DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
-                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_STAGING)
-                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
-                    DBT_ENV: staging
-
-                - script: |
-                    pip install databricks-labs-blueprint
-                    databricks bundle deploy --target staging -C databricks_bundles/staging
-                  displayName: 'Deploy Databricks Asset Bundle'
-                  env:
-                    DATABRICKS_HOST: $(DATABRICKS_HOST_STAGING)
-                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_STAGING)
 
   - stage: ApprovalForProd
     displayName: 'Manual Approval for Production'
@@ -370,43 +495,32 @@ stages:
                     versionSpec: '$(pythonVersion)'
                   displayName: 'Use Python $(pythonVersion)'
 
+                - task: Cache@2
+                  inputs:
+                    key: 'pip | "$(Agent.OS)" | requirements.txt'
+                    restoreKeys: |
+                      pip | "$(Agent.OS)"
+                    path: '$(PIP_CACHE_DIR)'
+                  displayName: 'Cache pip dependencies'
+
+                - task: Cache@2
+                  inputs:
+                    key: 'dbt-packages | "$(Agent.OS)" | dbt/packages.yml'
+                    restoreKeys: |
+                      dbt-packages | "$(Agent.OS)"
+                    path: '$(System.DefaultWorkingDirectory)/dbt/dbt_packages'
+                  displayName: 'Cache dbt packages'
+
                 - script: |
                     python -m pip install --upgrade pip
-                    pip install -r requirements.txt
+                    pip install -r requirements.txt --cache-dir $(PIP_CACHE_DIR)
                   displayName: 'Install Dependencies'
 
                 - script: |
-                    cd dbt
-                    dbt deps --profiles-dir $(DBT_PROFILES_DIR)
-                  displayName: 'Install dbt Dependencies'
-                  env:
-                    DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
-                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_PROD)
-                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)
-
-                - script: |
-                    cd dbt
-                    dbt run --profiles-dir $(DBT_PROFILES_DIR) --target prod
-                  displayName: 'Run dbt Models in Production'
+                    python scripts/metadata_pipeline.py --pipeline full_deploy --target prod
+                  displayName: 'Run Metadata Pipeline (Production)'
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
                     DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_PROD)
                     DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)
                     DBT_ENV: prod
-
-                - script: |
-                    cd dbt
-                    dbt test --profiles-dir $(DBT_PROFILES_DIR) --target prod
-                  displayName: 'Run Production Data Quality Tests'
-                  env:
-                    DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
-                    DATABRICKS_HTTP_PATH: $(DATABRICKS_HTTP_PATH_PROD)
-                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)
-                    DBT_ENV: prod
-
-                - script: |
-                    databricks bundle deploy --target prod -C databricks_bundles/prod
-                  displayName: 'Deploy Databricks Asset Bundle'
-                  env:
-                    DATABRICKS_HOST: $(DATABRICKS_HOST_PROD)
-                    DATABRICKS_TOKEN: $(DATABRICKS_TOKEN_PROD)

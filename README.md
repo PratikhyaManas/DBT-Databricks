@@ -48,6 +48,36 @@ make security
 python scripts/deploy.py --target dev
 python scripts/deploy.py --target staging
 python scripts/deploy.py --target prod
+
+# Metadata-driven pipeline
+python scripts/metadata_pipeline.py --list-pipelines
+python scripts/metadata_pipeline.py --pipeline full_deploy --target dev
+python scripts/metadata_pipeline.py --pipeline dbt_only --target staging
+make pipeline-dev
+```
+
+## Metadata-Driven Pipeline
+
+Pipeline orchestration is defined in [pipelines/pipeline_metadata.yaml](pipelines/pipeline_metadata.yaml). The runner [scripts/metadata_pipeline.py](scripts/metadata_pipeline.py) reads this metadata and executes typed steps (`health_check`, `dbt`, `bundle`, `shell`) with telemetry and audit logging.
+
+Key capabilities:
+
+- Define pipelines and step order in YAML (no Python changes for sequence updates)
+- Environment-specific variables in metadata (`dev`, `staging`, `prod`)
+- Conditional step execution by target or enable flags
+- Optional package-aware `dbt deps` optimization
+
+Examples:
+
+```bash
+# list available pipelines
+python scripts/metadata_pipeline.py --list-pipelines
+
+# execute full deploy
+python scripts/metadata_pipeline.py --pipeline full_deploy --target dev
+
+# inspect planned steps without running
+python scripts/metadata_pipeline.py --pipeline full_deploy --target prod --dry-run
 ```
 
 ## Architecture

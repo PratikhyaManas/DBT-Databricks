@@ -1,4 +1,4 @@
-.PHONY: help setup install test run clean docs deploy lint deps parse security security-audit bandit semgrep detect-secrets pip-audit
+.PHONY: help setup install test run clean docs deploy lint deps parse security security-audit bandit semgrep detect-secrets pip-audit pipeline-list pipeline-dev pipeline-staging pipeline-prod pipeline-run
 
 PYTHON := python3
 DBT_PATH := dbt
@@ -120,6 +120,21 @@ deploy-staging:
 
 deploy-prod:
 	$(PYTHON) scripts/deploy.py --target prod
+
+pipeline-list:
+	$(PYTHON) scripts/metadata_pipeline.py --list-pipelines
+
+pipeline-dev:
+	$(PYTHON) scripts/metadata_pipeline.py --pipeline full_deploy --target dev
+
+pipeline-staging:
+	$(PYTHON) scripts/metadata_pipeline.py --pipeline full_deploy --target staging
+
+pipeline-prod:
+	$(PYTHON) scripts/metadata_pipeline.py --pipeline full_deploy --target prod
+
+pipeline-run:
+	$(PYTHON) scripts/metadata_pipeline.py --pipeline $(PIPELINE) --target $(TARGET)
 
 load-test-data:
 	$(PYTHON) scripts/test_data_load.py
